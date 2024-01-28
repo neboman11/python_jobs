@@ -7,7 +7,7 @@ import requests
 
 monitored_city_latitude = "33.99755743650663"
 monitored_city_longitude = "-96.72286077920174"
-temperature_threshold = 70
+temperature_threshold = 30
 
 
 def get_monitored_temperature(one_week_from_today):
