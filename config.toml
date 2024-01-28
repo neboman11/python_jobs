@@ -1,0 +1,3 @@
+[[scheduled_job]]
+file = "cabin_temp_notif.py"
+interval = "30 8 * * *"
