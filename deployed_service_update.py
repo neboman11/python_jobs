@@ -1,7 +1,9 @@
+import io
 import os
 
 from github import Github
 from github import Auth
+import yaml
 
 
 def main():
@@ -22,6 +24,10 @@ def main():
     find_kustomize_file(argo_repo, repo_contents, kustomize_files)
 
     print(kustomize_files)
+    for kustomize_file in kustomize_files:
+        file_stream = io.StringIO(kustomize_file.content)
+        parsed_file = yaml.safe_load(file_stream)
+        print(parsed_file)
 
 
 def find_kustomize_file(argo_repo, repo_files, kustomize_file_list):
