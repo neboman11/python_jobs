@@ -10,7 +10,6 @@ import yaml
 
 
 def main():
-    discord_user = os.getenv("NOTIFY_DISCORD_USER")
     github_PAT = os.getenv("GITHUB_PAT")
 
     # using an access token
@@ -26,7 +25,6 @@ def main():
     kustomize_files = []
     find_kustomize_file(argo_repo, repo_contents, kustomize_files)
 
-    print(kustomize_files)
     for kustomize_file in kustomize_files:
         file_stream = io.BytesIO(base64.b64decode(kustomize_file.content))
         parsed_file = yaml.safe_load(file_stream)
@@ -64,11 +62,10 @@ def check_for_helm_chart_update(kustomize_file):
 
         # Sort the versions descending so the highest version is at the beginning
         remote_versions = list(natsorted(remote_versions, reverse=True))
-        print(remote_versions[0])
 
         if remote_versions[0] != deployed_chart["version"]:
             # Send a discord message alerting of the new version
-            print(
+            send_discord_notification(
                 f"{deployed_chart['namespace']}.{deployed_chart['releaseName']} has a new version: {remote_versions[0]}"
             )
 
@@ -80,6 +77,17 @@ def find_kustomize_file(argo_repo, repo_files, kustomize_file_list):
         if file.type == "dir" and file.name != "overlays":
             folder_contents = argo_repo.get_contents(f"/{file.path}")
             find_kustomize_file(argo_repo, folder_contents, kustomize_file_list)
+
+
+def send_discord_notification(message):
+    url = "http://ponyboy/send_discord_message"
+    request = {
+        "user_id": int(os.getenv("NOTIFY_DISCORD_USER")),
+        "message": message,
+    }
+    response = requests.post(url, json=request)
+    if response.status_code > 299:
+        print(response.text)
 
 
 if __name__ == "__main__":
