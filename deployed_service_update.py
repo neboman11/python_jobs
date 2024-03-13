@@ -2,6 +2,7 @@ import base64
 import io
 import os
 
+from dotenv import load_dotenv
 from github import Github
 from github import Auth
 from natsort import natsorted
@@ -10,6 +11,7 @@ import yaml
 
 
 def main():
+    load_dotenv()
     github_PAT = os.getenv("GITHUB_PAT")
 
     # using an access token
