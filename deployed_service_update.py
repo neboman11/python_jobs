@@ -82,7 +82,7 @@ def find_kustomize_file(argo_repo, repo_files, kustomize_file_list):
 
 
 def send_discord_notification(message):
-    url = f"{os.getenv("PONYBOY_BASE_URL")}/send_discord_message"
+    url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
     request = {
         "user_id": int(os.getenv("NOTIFY_DISCORD_USER")),
         "message": message,
