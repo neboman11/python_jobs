@@ -22,7 +22,7 @@ def get_monitored_temperature(one_week_from_today):
 
 
 def send_discord_notification(next_week_min_temp, next_week_date):
-    url = "http://ponyboy/send_discord_message"
+    url = f"{os.getenv("PONYBOY_BASE_URL")}/send_discord_message"
     request = {
         "user_id": int(os.getenv("NOTIFY_DISCORD_USER")),
         "message": f"WARNING: Temperature at the cabin will be {next_week_min_temp} on {next_week_date}.",
