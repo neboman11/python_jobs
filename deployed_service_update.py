@@ -40,22 +40,22 @@ def main():
             updated_file["sha"] = kustomize_file.sha
             files_needing_updates.append(updated_file)
 
-    date_string = datetime.now().strftime("%Y-%m-%d")
-    main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
-    new_branch = argo_repo.create_git_ref(
-        f"refs/heads/service_update/{date_string}", main_branch.object.sha
-    )
+    # date_string = datetime.now().strftime("%Y-%m-%d")
+    # main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
+    # new_branch = argo_repo.create_git_ref(
+    #     f"refs/heads/service_update/{date_string}", main_branch.object.sha
+    # )
 
-    for file in files_needing_updates:
-        file_content_stream = io.StringIO()
-        yaml.dump(file["kustomize_file"], file_content_stream)
-        argo_repo.update_file(
-            file["path"],
-            f"Bump version to {file['new_version']}",
-            base64.b64encode(file_content_stream),
-            file["sha"],
-            new_branch.ref,
-        )
+    # for file in files_needing_updates:
+    #     file_content_stream = io.StringIO()
+    #     yaml.dump(file["kustomize_file"], file_content_stream)
+    #     argo_repo.update_file(
+    #         file["path"],
+    #         f"Bump version to {file['new_version']}",
+    #         base64.b64encode(file_content_stream),
+    #         file["sha"],
+    #         new_branch.ref,
+    #     )
 
 
 def check_for_helm_chart_update(kustomize_file: dict):
@@ -94,11 +94,11 @@ def check_for_helm_chart_update(kustomize_file: dict):
             # Return an object containing the file object with the updated version, the old, version, and the new version
             original_version = deployed_chart["version"]
             kustomize_file["helmCharts"][0]["version"] = remote_versions[0]
-            return {
-                "kustomize_file": kustomize_file,
-                "original_version": original_version,
-                "new_version": remote_versions[0],
-            }
+            # return {
+            #     "kustomize_file": kustomize_file,
+            #     "original_version": original_version,
+            #     "new_version": remote_versions[0],
+            # }
 
             # Send a discord message alerting of the new version
             send_discord_notification(
