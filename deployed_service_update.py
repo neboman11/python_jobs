@@ -2,6 +2,7 @@ import base64
 from datetime import datetime
 import io
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 from github import Auth
@@ -27,37 +28,42 @@ def main():
     argo_repo = gh.get_repo("neboman11/argocd-definitions")
     repo_contents = argo_repo.get_contents("/")
 
+    print("Finding kustomize files in repo")
     kustomize_files: list[ContentFile.ContentFile] = []
     find_kustomize_file(argo_repo, repo_contents, kustomize_files)
 
-    files_needing_updates = []
+    print("Checking helm chart versions for update")
+    files_needing_updates: list[dict[str, Any]] = []
     for kustomize_file in kustomize_files:
         file_stream = io.BytesIO(kustomize_file.decoded_content)
         parsed_file = yaml.safe_load(file_stream)
         # Check that the file contains a helm chart
-        if "helmCharts" in kustomize_file:
+        if "helmCharts" in parsed_file:
             updated_file = check_for_helm_chart_update(parsed_file)
             if updated_file != None:
                 updated_file["path"] = kustomize_file.path
                 updated_file["sha"] = kustomize_file.sha
                 files_needing_updates.append(updated_file)
 
-    # date_string = datetime.now().strftime("%Y-%m-%d")
-    # main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
-    # new_branch = argo_repo.create_git_ref(
-    #     f"refs/heads/service_update/{date_string}", main_branch.object.sha
-    # )
+    print("Creating branch to store changes in")
+    date_string = datetime.now().strftime("%Y-%m-%d")
+    main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
+    new_branch = argo_repo.create_git_ref(
+        f"refs/heads/service_update/{date_string}", main_branch.object.sha
+    )
 
-    # for file in files_needing_updates:
-    #     file_content_stream = io.StringIO()
-    #     yaml.dump(file["kustomize_file"], file_content_stream)
-    #     argo_repo.update_file(
-    #         file["path"],
-    #         f"Bump version to {file['new_version']}",
-    #         base64.b64encode(file_content_stream),
-    #         file["sha"],
-    #         new_branch.ref,
-    #     )
+    print("Committing changes to update helm charts")
+    for file in files_needing_updates:
+        file_content_stream = io.StringIO()
+        yaml.dump(file["kustomize_file"], file_content_stream)
+        file_content_stream.seek(0)
+        argo_repo.update_file(
+            file["path"],
+            f"Bump {file['release_name']} version to {file['new_version']}",
+            file_content_stream.getvalue(),
+            file["sha"],
+            new_branch.ref,
+        )
 
 
 def check_for_helm_chart_update(kustomize_file: dict):
@@ -94,11 +100,12 @@ def check_for_helm_chart_update(kustomize_file: dict):
         # Return an object containing the file object with the updated version, the old, version, and the new version
         original_version = deployed_chart["version"]
         kustomize_file["helmCharts"][0]["version"] = remote_versions[0]
-        # return {
-        #     "kustomize_file": kustomize_file,
-        #     "original_version": original_version,
-        #     "new_version": remote_versions[0],
-        # }
+        return {
+            "kustomize_file": kustomize_file,
+            "original_version": original_version,
+            "new_version": remote_versions[0],
+            "release_name": deployed_chart["releaseName"],
+        }
 
         # Send a discord message alerting of the new version
         send_discord_notification(
