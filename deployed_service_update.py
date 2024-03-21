@@ -33,23 +33,58 @@ def main():
     find_kustomize_file(argo_repo, repo_contents, kustomize_files)
 
     print("Checking helm chart versions for update")
-    files_needing_updates: list[dict[str, Any]] = []
-    for kustomize_file in kustomize_files:
-        file_stream = io.BytesIO(kustomize_file.decoded_content)
-        parsed_file = yaml.safe_load(file_stream)
-        # Check that the file contains a helm chart
-        if "helmCharts" in parsed_file:
-            updated_file = check_for_helm_chart_update(parsed_file)
-            if updated_file != None:
-                updated_file["path"] = kustomize_file.path
-                updated_file["sha"] = kustomize_file.sha
-                files_needing_updates.append(updated_file)
+    files_needing_updates = kustomize_files_find_helm_charts_with_updates(
+        kustomize_files
+    )
 
+    charts_to_directly_update = filter(
+        chart_updates_with_minor_or_patch_filter, files_needing_updates
+    )
+
+    non_major_pull_request = create_pull_request_for_updates(
+        argo_repo, charts_to_directly_update
+    )
+
+    non_major_pull_request.merge()
+
+    charts_with_major_version = filter(
+        files_needing_updates,
+        lambda x: not chart_updates_with_minor_or_patch_filter(x),
+    )
+
+    non_major_pull_request = create_pull_request_for_updates(
+        argo_repo, charts_with_major_version
+    )
+
+
+def create_pull_request_for_updates(argo_repo, charts_to_update):
+    new_branch_name = create_pr_for_chart_updates(argo_repo, charts_to_update)
+    pull_request = argo_repo.create_pull(
+        argo_repo.default_branch,
+        new_branch_name,
+        title="Automatic Helm chart version bump",
+        body="",
+    )
+    return pull_request
+
+
+def chart_updates_with_minor_or_patch_filter(helm_chart_update):
+    split_original_version = helm_chart_update["original_version"].split(".")
+    split_new_version = helm_chart_update["new_version"].split(".")
+    if split_original_version[0] != split_new_version[0]:
+        return False
+    return True
+
+
+def create_pr_for_chart_updates(
+    argo_repo: Repository.Repository, files_needing_updates: list[dict[str, Any]]
+):
     print("Creating branch to store changes in")
     date_string = datetime.now().strftime("%Y-%m-%d")
     main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
+    new_branch_name = f"service_update/{date_string}"
     new_branch = argo_repo.create_git_ref(
-        f"refs/heads/service_update/{date_string}", main_branch.object.sha
+        f"refs/heads/{new_branch_name}", main_branch.object.sha
     )
 
     print("Committing changes to update helm charts")
@@ -64,6 +99,25 @@ def main():
             file["sha"],
             new_branch.ref,
         )
+
+    return new_branch_name
+
+
+def kustomize_files_find_helm_charts_with_updates(
+    kustomize_files: list[ContentFile.ContentFile],
+):
+    files_needing_updates: list[dict[str, Any]] = []
+    for kustomize_file in kustomize_files:
+        file_stream = io.BytesIO(kustomize_file.decoded_content)
+        parsed_file = yaml.safe_load(file_stream)
+        # Check that the file contains a helm chart
+        if "helmCharts" in parsed_file:
+            updated_file = check_for_helm_chart_update(parsed_file)
+            if updated_file != None:
+                updated_file["path"] = kustomize_file.path
+                updated_file["sha"] = kustomize_file.sha
+                files_needing_updates.append(updated_file)
+    return files_needing_updates
 
 
 def check_for_helm_chart_update(kustomize_file: dict):
