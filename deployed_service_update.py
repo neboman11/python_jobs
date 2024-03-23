@@ -37,12 +37,16 @@ def main():
         kustomize_files
     )
 
+    date_string = datetime.now().strftime("%Y-%m-%d")
+    new_branch_name = f"service_update/{date_string}"
+    target_branch = create_branch_for_chart_updates(argo_repo, new_branch_name)
+
     charts_to_directly_update = filter(
         chart_updates_with_minor_or_patch_filter, files_needing_updates
     )
 
     non_major_pull_request = create_pull_request_for_updates(
-        argo_repo, charts_to_directly_update
+        argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
     )
 
     non_major_pull_request.merge()
@@ -53,12 +57,14 @@ def main():
     )
 
     non_major_pull_request = create_pull_request_for_updates(
-        argo_repo, charts_with_major_version
+        argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
     )
 
 
-def create_pull_request_for_updates(argo_repo, charts_to_update):
-    new_branch_name = create_pr_for_chart_updates(argo_repo, charts_to_update)
+def create_pull_request_for_updates(
+    argo_repo, new_branch_name: str, target_branch_ref: str, charts_to_update
+):
+    commit_updates_to_branch(argo_repo, target_branch_ref, charts_to_update)
     pull_request = argo_repo.create_pull(
         argo_repo.default_branch,
         new_branch_name,
@@ -76,17 +82,21 @@ def chart_updates_with_minor_or_patch_filter(helm_chart_update):
     return True
 
 
-def create_pr_for_chart_updates(
-    argo_repo: Repository.Repository, files_needing_updates: list[dict[str, Any]]
-):
+def create_branch_for_chart_updates(argo_repo: Repository.Repository, new_branch_name):
     print("Creating branch to store changes in")
-    date_string = datetime.now().strftime("%Y-%m-%d")
     main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
-    new_branch_name = f"service_update/{date_string}"
     new_branch = argo_repo.create_git_ref(
         f"refs/heads/{new_branch_name}", main_branch.object.sha
     )
 
+    return new_branch
+
+
+def commit_updates_to_branch(
+    argo_repo: Repository.Repository,
+    target_branch_ref: str,
+    files_needing_updates: list[dict[str, Any]],
+):
     print("Committing changes to update helm charts")
     for file in files_needing_updates:
         file_content_stream = io.StringIO()
@@ -97,10 +107,8 @@ def create_pr_for_chart_updates(
             f"Bump {file['release_name']} version to {file['new_version']}",
             file_content_stream.getvalue(),
             file["sha"],
-            new_branch.ref,
+            target_branch_ref,
         )
-
-    return new_branch_name
 
 
 def kustomize_files_find_helm_charts_with_updates(
