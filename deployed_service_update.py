@@ -41,24 +41,28 @@ def main():
     new_branch_name = f"service_update/{date_string}"
     target_branch = create_branch_for_chart_updates(argo_repo, new_branch_name)
 
-    charts_to_directly_update = filter(
-        chart_updates_with_minor_or_patch_filter, files_needing_updates
+    charts_to_directly_update = list(
+        filter(chart_updates_with_minor_or_patch_filter, files_needing_updates)
     )
 
-    non_major_pull_request = create_pull_request_for_updates(
-        argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
+    if len(charts_to_directly_update) > 0:
+        non_major_pull_request = create_pull_request_for_updates(
+            argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
+        )
+
+        non_major_pull_request.merge()
+
+    charts_with_major_version = list(
+        filter(
+            lambda x: not chart_updates_with_minor_or_patch_filter(x),
+            files_needing_updates,
+        )
     )
 
-    non_major_pull_request.merge()
-
-    charts_with_major_version = filter(
-        files_needing_updates,
-        lambda x: not chart_updates_with_minor_or_patch_filter(x),
-    )
-
-    non_major_pull_request = create_pull_request_for_updates(
-        argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
-    )
+    if len(charts_with_major_version) > 0:
+        non_major_pull_request = create_pull_request_for_updates(
+            argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
+        )
 
 
 def create_pull_request_for_updates(
