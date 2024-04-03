@@ -1,4 +1,3 @@
-import base64
 from datetime import datetime
 import io
 import os
@@ -134,6 +133,9 @@ def kustomize_files_find_helm_charts_with_updates(
 
 def check_for_helm_chart_update(kustomize_file: dict):
     deployed_chart = kustomize_file["helmCharts"][0]
+    if deployed_chart["namespace"] == "databases":
+        return
+
     chart_repo = deployed_chart["repo"]
     if not chart_repo.endswith("/"):
         chart_repo += "/"
@@ -172,11 +174,6 @@ def check_for_helm_chart_update(kustomize_file: dict):
             "new_version": remote_versions[0],
             "release_name": deployed_chart["releaseName"],
         }
-
-        # Send a discord message alerting of the new version
-        send_discord_notification(
-            f"{deployed_chart['namespace']}.{deployed_chart['releaseName']} has a new version: {remote_versions[0]}"
-        )
 
 
 def find_kustomize_file(
