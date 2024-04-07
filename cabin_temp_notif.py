@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 import requests
 
+import jobs_common
+
 
 monitored_city_latitude = "33.99755743650663"
 monitored_city_longitude = "-96.72286077920174"
@@ -22,14 +24,9 @@ def get_monitored_temperature(one_week_from_today):
 
 
 def send_discord_notification(next_week_min_temp, next_week_date):
-    url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
-    request = {
-        "user_id": int(os.getenv("NOTIFY_DISCORD_USER")),
-        "message": f"WARNING: Temperature at the cabin will be {next_week_min_temp} on {next_week_date}.",
-    }
-    response = requests.post(url, json=request)
-    if response.status_code > 299:
-        print(response.text)
+    jobs_common.send_discord_notification(
+        f"WARNING: Temperature at the cabin will be {next_week_min_temp} on {next_week_date}.",
+    )
 
 
 def main():

@@ -12,6 +12,8 @@ from natsort import natsorted
 import requests
 import yaml
 
+import jobs_common
+
 
 def main():
     load_dotenv()
@@ -51,6 +53,8 @@ def main():
 
         non_major_pull_request.merge()
 
+        jobs_common.send_discord_notification("Updated chart versions")
+
     charts_with_major_version = list(
         filter(
             lambda x: not chart_updates_with_minor_or_patch_filter(x),
@@ -62,6 +66,8 @@ def main():
         non_major_pull_request = create_pull_request_for_updates(
             argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
         )
+
+        jobs_common.send_discord_notification("Created PR for major chart versions")
 
 
 def create_pull_request_for_updates(
