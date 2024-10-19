@@ -53,7 +53,7 @@ def main():
 
         non_major_pull_request.merge()
 
-        jobs_common.send_discord_notification("Updated chart versions")
+        jobs_common.send_discord_notification("Updated versions for " + ", ".join([chart["releaseName"] for chart in charts_to_directly_update]))
 
     charts_with_major_version = list(
         filter(
@@ -67,7 +67,7 @@ def main():
             argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
         )
 
-        jobs_common.send_discord_notification("Created PR for major chart versions")
+        jobs_common.send_discord_notification("Created PR for major version bumps on " + ", ".join([chart["releaseName"] for chart in charts_with_major_version]))
 
 
 def create_pull_request_for_updates(
