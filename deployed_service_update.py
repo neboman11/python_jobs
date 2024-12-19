@@ -37,37 +37,40 @@ def main():
     files_needing_updates = kustomize_files_find_helm_charts_with_updates(
         kustomize_files
     )
+    
+    if len(files_needing_updates) > 0:
+        date_string = datetime.now().strftime("%Y-%m-%d")
+        new_branch_name = f"service_update/{date_string}"
+        target_branch = create_branch_for_chart_updates(argo_repo, new_branch_name)
 
-    date_string = datetime.now().strftime("%Y-%m-%d")
-    new_branch_name = f"service_update/{date_string}"
-    target_branch = create_branch_for_chart_updates(argo_repo, new_branch_name)
-
-    charts_to_directly_update = list(
-        filter(chart_updates_with_minor_or_patch_filter, files_needing_updates)
-    )
-
-    if len(charts_to_directly_update) > 0:
-        non_major_pull_request = create_pull_request_for_updates(
-            argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
+        charts_to_directly_update = list(
+            filter(chart_updates_with_minor_or_patch_filter, files_needing_updates)
         )
 
-        non_major_pull_request.merge()
+        if len(charts_to_directly_update) > 0:
+            non_major_pull_request = create_pull_request_for_updates(
+                argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
+            )
 
-        jobs_common.send_discord_notification("Updated versions for " + ", ".join([chart["releaseName"] for chart in charts_to_directly_update]))
+            non_major_pull_request.merge()
 
-    charts_with_major_version = list(
-        filter(
-            lambda x: not chart_updates_with_minor_or_patch_filter(x),
-            files_needing_updates,
+            jobs_common.send_discord_notification("Updated versions for " + ", ".join([chart["releaseName"] for chart in charts_to_directly_update]))
+
+        charts_with_major_version = list(
+            filter(
+                lambda x: not chart_updates_with_minor_or_patch_filter(x),
+                files_needing_updates,
+            )
         )
-    )
 
-    if len(charts_with_major_version) > 0:
-        non_major_pull_request = create_pull_request_for_updates(
-            argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
-        )
+        if len(charts_with_major_version) > 0:
+            non_major_pull_request = create_pull_request_for_updates(
+                argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
+            )
 
-        jobs_common.send_discord_notification("Created PR for major version bumps on " + ", ".join([chart["releaseName"] for chart in charts_with_major_version]))
+            jobs_common.send_discord_notification("Created PR for major version bumps on " + ", ".join([chart["releaseName"] for chart in charts_with_major_version]))
+    else:
+        print("Found no charts to update")
 
 
 def create_pull_request_for_updates(
