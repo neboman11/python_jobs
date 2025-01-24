@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime
 import io
 import os
@@ -32,7 +33,9 @@ def main():
     print("Finding kustomize and deployment files in repo")
     kustomize_files: list[ContentFile.ContentFile] = []
     deployment_files: list[ContentFile.ContentFile] = []
-    find_kustomize_and_deployment_files(argo_repo, repo_contents, kustomize_files, deployment_files)
+    find_kustomize_and_deployment_files(
+        argo_repo, repo_contents, kustomize_files, deployment_files
+    )
 
     print("Checking helm chart versions for update")
     files_needing_updates = kustomize_files_find_helm_charts_with_updates(
@@ -52,14 +55,21 @@ def main():
         )
 
         if len(charts_to_directly_update) > 0:
-            commit_updates_to_branch(argo_repo, target_branch.ref, charts_to_directly_update)
+            commit_updates_to_branch(
+                argo_repo, target_branch.ref, charts_to_directly_update
+            )
             non_major_pull_request = create_pull_request_for_updates(
                 argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
             )
 
             non_major_pull_request.merge()
 
-            jobs_common.send_discord_notification("Updated versions for " + ", ".join([chart["release_name"] for chart in charts_to_directly_update]))
+            jobs_common.send_discord_notification(
+                "Updated versions for "
+                + ", ".join(
+                    [chart["release_name"] for chart in charts_to_directly_update]
+                )
+            )
 
         charts_with_major_version = list(
             filter(
@@ -69,20 +79,37 @@ def main():
         )
 
         if len(charts_with_major_version) > 0:
-            commit_updates_to_branch(argo_repo, target_branch.ref, charts_with_major_version)
+            commit_updates_to_branch(
+                argo_repo, target_branch.ref, charts_with_major_version
+            )
             non_major_pull_request = create_pull_request_for_updates(
                 argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
             )
 
-            jobs_common.send_discord_notification("Created PR for major version bumps on " + ", ".join([chart["release_name"] for chart in charts_with_major_version]))
-
-        if len(image_files_needing_updates) > 0:
-            commit_image_updates_to_branch(argo_repo, target_branch.ref, image_files_needing_updates)
-            image_pull_request = create_pull_request_for_updates(
-                argo_repo, new_branch_name, target_branch.ref, image_files_needing_updates
+            jobs_common.send_discord_notification(
+                "Created PR for major version bumps on "
+                + ", ".join(
+                    [chart["release_name"] for chart in charts_with_major_version]
+                )
             )
 
-            jobs_common.send_discord_notification("Updated image tags for " + ", ".join([image["image_name"] for image in image_files_needing_updates]))
+        if len(image_files_needing_updates) > 0:
+            commit_image_updates_to_branch(
+                argo_repo, target_branch.ref, image_files_needing_updates
+            )
+            image_pull_request = create_pull_request_for_updates(
+                argo_repo,
+                new_branch_name,
+                target_branch.ref,
+                image_files_needing_updates,
+            )
+
+            jobs_common.send_discord_notification(
+                "Updated image tags for "
+                + ", ".join(
+                    [image["image_name"] for image in image_files_needing_updates]
+                )
+            )
 
     else:
         print("Found no charts or images to update")
@@ -232,7 +259,9 @@ def find_kustomize_and_deployment_files(
             deployment_file_list.append(file)
         if file.type == "dir" and file.name != "overlays":
             folder_contents = argo_repo.get_contents(f"/{file.path}")
-            find_kustomize_and_deployment_files(argo_repo, folder_contents, kustomize_file_list, deployment_file_list)
+            find_kustomize_and_deployment_files(
+                argo_repo, folder_contents, kustomize_file_list, deployment_file_list
+            )
 
 
 def deployment_files_find_image_updates(
@@ -273,21 +302,79 @@ def parse_image(image: str):
 
 
 def get_latest_image_tag(image_name: str):
-    if image_name.startswith("docker.io/"):
-        image_name = image_name[len("docker.io/"):]
+    # Default registry
+    registry = "docker.io"
+
+    # Split the image name to check for registry
     parts = image_name.split("/")
-    if len(parts) == 1:
-        image_name = f"library/{parts[0]}"
+
+    # Check if the first part is a registry
+    if len(parts) > 1 and "." in parts[0]:
+        registry = parts[0]
+        image_name = "/".join(parts[1:])
     else:
         image_name = "/".join(parts)
 
-    response = requests.get(f"https://hub.docker.com/v2/repositories/{image_name}/tags/")
-    if not response.ok:
-        print(response.content)
-        return None
-    tags = response.json()["results"]
-    latest_tag = tags[0]["name"]
-    return latest_tag
+    if registry == "docker.io":
+        if image_name.startswith("docker.io/"):
+            image_name = image_name[len("docker.io/") :]
+        parts = image_name.split("/")
+        if len(parts) == 1:
+            image_name = f"library/{parts[0]}"
+        else:
+            image_name = "/".join(parts)
+
+        response = requests.get(
+            f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
+        )
+        if not response.ok:
+            print(
+                f"Error pulling latest image tag from Docker for {image_name}: {response.content}"
+            )
+            return None
+        tags = response.json().get("results", [])
+        if not tags:
+            return None
+        latest_tag = tags[0]["name"]
+        return latest_tag
+
+    elif registry == "ghcr.io":
+        if image_name.startswith("ghcr.io/"):
+            image_name = image_name[len("ghcr.io/") :]
+        response = requests.get(
+            f"https://ghcr.io/v2/{image_name}/tags/list",
+            headers={
+                "Authorization": f"Bearer {base64.b64encode(f"neboman11:{os.getenv("GHCR_TOKEN")}")}"
+            },
+        )
+        if not response.ok:
+            print(
+                f"Error pulling latest image tag from GHCR for {image_name}: {response.content}"
+            )
+            return None
+        tags = response.json().get("tags", [])
+        if not tags:
+            return None
+        latest_tag = tags[0]
+        return latest_tag
+
+    elif registry == "quay.io":
+        if image_name.startswith("quay.io/"):
+            image_name = image_name[len("quay.io/") :]
+        response = requests.get(f"https://quay.io/api/v1/repository/{image_name}/tag/")
+        if not response.ok:
+            print(
+                f"Error pulling latest image tag from Quay for {image_name}: {response.content}"
+            )
+            return None
+        tags = response.json().get("tags", [])
+        if not tags:
+            return None
+        latest_tag = tags[0]["name"]
+        return latest_tag
+
+    else:
+        raise ValueError(f"Unsupported registry: {registry}")
 
 
 def send_discord_notification(message):
