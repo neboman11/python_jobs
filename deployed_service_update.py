@@ -2,7 +2,9 @@ import base64
 from datetime import datetime
 import io
 import os
+import re
 from typing import Any
+import argparse
 
 from dotenv import load_dotenv
 from github import Auth
@@ -16,7 +18,7 @@ import yaml
 import jobs_common
 
 
-def main():
+def main(dry_run: bool):
     load_dotenv()
     github_PAT = os.getenv("GITHUB_PAT")
 
@@ -48,21 +50,27 @@ def main():
     if len(files_needing_updates) > 0 or len(image_files_needing_updates) > 0:
         date_string = datetime.now().strftime("%Y-%m-%d")
         new_branch_name = f"service_update/{date_string}"
-        target_branch = create_branch_for_chart_updates(argo_repo, new_branch_name)
 
         charts_to_directly_update = list(
             filter(chart_updates_with_minor_or_patch_filter, files_needing_updates)
         )
 
         if len(charts_to_directly_update) > 0:
-            commit_updates_to_branch(
-                argo_repo, target_branch.ref, charts_to_directly_update
-            )
-            non_major_pull_request = create_pull_request_for_updates(
-                argo_repo, new_branch_name, target_branch.ref, charts_to_directly_update
-            )
+            if not dry_run:
+                target_branch = create_branch_for_chart_updates(
+                    argo_repo, new_branch_name
+                )
+                commit_updates_to_branch(
+                    argo_repo, target_branch.ref, charts_to_directly_update
+                )
+                non_major_pull_request = create_pull_request_for_updates(
+                    argo_repo,
+                    new_branch_name,
+                    target_branch.ref,
+                    charts_to_directly_update,
+                )
 
-            non_major_pull_request.merge()
+                non_major_pull_request.merge()
 
             jobs_common.send_discord_notification(
                 "Updated versions for "
@@ -79,12 +87,19 @@ def main():
         )
 
         if len(charts_with_major_version) > 0:
-            commit_updates_to_branch(
-                argo_repo, target_branch.ref, charts_with_major_version
-            )
-            non_major_pull_request = create_pull_request_for_updates(
-                argo_repo, new_branch_name, target_branch.ref, charts_with_major_version
-            )
+            if not dry_run:
+                target_branch = create_branch_for_chart_updates(
+                    argo_repo, new_branch_name
+                )
+                commit_updates_to_branch(
+                    argo_repo, target_branch.ref, charts_with_major_version
+                )
+                non_major_pull_request = create_pull_request_for_updates(
+                    argo_repo,
+                    new_branch_name,
+                    target_branch.ref,
+                    charts_with_major_version,
+                )
 
             jobs_common.send_discord_notification(
                 "Created PR for major version bumps on "
@@ -94,15 +109,19 @@ def main():
             )
 
         if len(image_files_needing_updates) > 0:
-            commit_image_updates_to_branch(
-                argo_repo, target_branch.ref, image_files_needing_updates
-            )
-            image_pull_request = create_pull_request_for_updates(
-                argo_repo,
-                new_branch_name,
-                target_branch.ref,
-                image_files_needing_updates,
-            )
+            if not dry_run:
+                target_branch = create_branch_for_chart_updates(
+                    argo_repo, new_branch_name
+                )
+                commit_image_updates_to_branch(
+                    argo_repo, target_branch.ref, image_files_needing_updates
+                )
+                image_pull_request = create_pull_request_for_updates(
+                    argo_repo,
+                    new_branch_name,
+                    target_branch.ref,
+                    image_files_needing_updates,
+                )
 
             jobs_common.send_discord_notification(
                 "Updated image tags for "
@@ -113,6 +132,9 @@ def main():
 
     else:
         print("Found no charts or images to update")
+
+    if dry_run:
+        print("Dry run complete. No changes were committed.")
 
 
 def create_pull_request_for_updates(
@@ -333,18 +355,16 @@ def get_latest_image_tag(image_name: str):
             )
             return None
         tags = response.json().get("results", [])
+        tags = [tag["name"] for tag in tags]
         if not tags:
             return None
-        latest_tag = tags[0]["name"]
-        return latest_tag
-
     elif registry == "ghcr.io":
         if image_name.startswith("ghcr.io/"):
             image_name = image_name[len("ghcr.io/") :]
         response = requests.get(
             f"https://ghcr.io/v2/{image_name}/tags/list",
             headers={
-                "Authorization": f"Bearer {base64.b64encode(f"neboman11:{os.getenv("GHCR_TOKEN")}")}"
+                "Authorization": f"Bearer {base64.b64encode(bytes(f'neboman11:{os.getenv('GHCR_TOKEN')}', 'utf-8')).decode('utf-8')}"
             },
         )
         if not response.ok:
@@ -355,9 +375,6 @@ def get_latest_image_tag(image_name: str):
         tags = response.json().get("tags", [])
         if not tags:
             return None
-        latest_tag = tags[0]
-        return latest_tag
-
     elif registry == "quay.io":
         if image_name.startswith("quay.io/"):
             image_name = image_name[len("quay.io/") :]
@@ -370,11 +387,23 @@ def get_latest_image_tag(image_name: str):
         tags = response.json().get("tags", [])
         if not tags:
             return None
-        latest_tag = tags[0]["name"]
-        return latest_tag
-
     else:
         raise ValueError(f"Unsupported registry: {registry}")
+
+    # Filter tags to match the regex pattern
+    regex = re.compile(r"^v?\d+\.\d+\.\d+(?:\.\d+)?$")
+    filtered_tags = [tag for tag in tags if regex.match(tag)]
+
+    if not filtered_tags:
+        print(f"No tags found matching the pattern for {image_name}")
+        return None
+
+    # Sort the tags using natsorted
+    sorted_tags = natsorted(filtered_tags, key=lambda x: x, reverse=True)
+
+    # Get the latest tag
+    latest_tag = sorted_tags[0]
+    return latest_tag
 
 
 def send_discord_notification(message):
@@ -389,4 +418,9 @@ def send_discord_notification(message):
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Deployed service update script")
+    parser.add_argument(
+        "--dry-run", "-d", action="store_true", help="Run the script in dry run mode"
+    )
+    args = parser.parse_args()
+    main(args.dry_run)
