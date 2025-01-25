@@ -355,7 +355,7 @@ def get_latest_image_tag(image_name: str):
         if image_name.startswith("ghcr.io/"):
             image_name = image_name[len("ghcr.io/") :]
         image_user = image_name.split("/")[0]
-        image_repo = image_name.split("/")[1]
+        image_repo = image_name[len(image_user) + 1 :].replace("/", "%2F")
         tags = []
         response = requests.get(
             f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions",
