@@ -11,6 +11,7 @@ from github import Auth
 from github import ContentFile
 from github import Github
 from github import Repository
+import github
 from natsort import natsorted
 import requests
 import yaml
@@ -57,17 +58,13 @@ def main(dry_run: bool):
 
         if len(charts_to_directly_update) > 0:
             if not dry_run:
-                target_branch = create_branch_for_chart_updates(
-                    argo_repo, new_branch_name
-                )
+                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
                 commit_updates_to_branch(
                     argo_repo, target_branch.ref, charts_to_directly_update
                 )
                 non_major_pull_request = create_pull_request_for_updates(
                     argo_repo,
                     new_branch_name,
-                    target_branch.ref,
-                    charts_to_directly_update,
                 )
 
                 non_major_pull_request.merge()
@@ -88,17 +85,13 @@ def main(dry_run: bool):
 
         if len(charts_with_major_version) > 0:
             if not dry_run:
-                target_branch = create_branch_for_chart_updates(
-                    argo_repo, new_branch_name
-                )
+                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
                 commit_updates_to_branch(
                     argo_repo, target_branch.ref, charts_with_major_version
                 )
                 non_major_pull_request = create_pull_request_for_updates(
                     argo_repo,
                     new_branch_name,
-                    target_branch.ref,
-                    charts_with_major_version,
                 )
 
             jobs_common.send_discord_notification(
@@ -110,17 +103,13 @@ def main(dry_run: bool):
 
         if len(image_files_needing_updates) > 0:
             if not dry_run:
-                target_branch = create_branch_for_chart_updates(
-                    argo_repo, new_branch_name
-                )
+                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
                 commit_image_updates_to_branch(
                     argo_repo, target_branch.ref, image_files_needing_updates
                 )
                 image_pull_request = create_pull_request_for_updates(
                     argo_repo,
                     new_branch_name,
-                    target_branch.ref,
-                    image_files_needing_updates,
                 )
 
             jobs_common.send_discord_notification(
@@ -137,10 +126,7 @@ def main(dry_run: bool):
         print("Dry run complete. No changes were committed.")
 
 
-def create_pull_request_for_updates(
-    argo_repo, new_branch_name: str, target_branch_ref: str, files_to_update
-):
-    commit_updates_to_branch(argo_repo, target_branch_ref, files_to_update)
+def create_pull_request_for_updates(argo_repo, new_branch_name: str):
     pull_request = argo_repo.create_pull(
         argo_repo.default_branch,
         new_branch_name,
@@ -158,12 +144,15 @@ def chart_updates_with_minor_or_patch_filter(helm_chart_update):
     return True
 
 
-def create_branch_for_chart_updates(argo_repo: Repository.Repository, new_branch_name):
+def create_branch_for_updates(argo_repo: Repository.Repository, new_branch_name):
     print("Creating branch to store changes in")
     main_branch = argo_repo.get_git_ref(f"heads/{argo_repo.default_branch}")
-    new_branch = argo_repo.create_git_ref(
-        f"refs/heads/{new_branch_name}", main_branch.object.sha
-    )
+    try:
+        new_branch = argo_repo.get_git_ref(f"heads/{new_branch_name}")
+    except github.GithubException:
+        new_branch = argo_repo.create_git_ref(
+            f"refs/heads/{new_branch_name}", main_branch.object.sha
+        )
 
     return new_branch
 
@@ -235,7 +224,9 @@ def check_for_helm_chart_update(kustomize_file: dict):
     # Pull the index file containing all the available charts at the repo
     response = requests.get(f"{chart_repo}index.yaml")
     if not response.ok:
-        print(response.content)
+        print(
+            f"Error pulling latest chart index from {chart_repo} for {deployed_chart["releaseName"]}: {response.content}"
+        )
         return
     repository_index = yaml.safe_load(io.BytesIO(response.content))
 
@@ -306,6 +297,8 @@ def check_for_image_update(deployment_file: dict):
     for container in containers:
         image_name, current_tag = parse_image(container["image"])
         new_tag = get_latest_image_tag(image_name)
+        if new_tag == None:
+            return None
         if new_tag != current_tag:
             container["image"] = f"{image_name}:{new_tag}"
             return {
@@ -361,18 +354,40 @@ def get_latest_image_tag(image_name: str):
     elif registry == "ghcr.io":
         if image_name.startswith("ghcr.io/"):
             image_name = image_name[len("ghcr.io/") :]
+        image_user = image_name.split("/")[0]
+        image_repo = image_name.split("/")[1]
+        tags = []
         response = requests.get(
-            f"https://ghcr.io/v2/{image_name}/tags/list",
-            headers={
-                "Authorization": f"Bearer {base64.b64encode(bytes(f'neboman11:{os.getenv('GHCR_TOKEN')}', 'utf-8')).decode('utf-8')}"
-            },
+            f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions",
+            headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
         )
         if not response.ok:
             print(
                 f"Error pulling latest image tag from GHCR for {image_name}: {response.content}"
             )
             return None
-        tags = response.json().get("tags", [])
+
+        packages = response.json()
+        page_num = 1
+        # Pull version tags for every page
+        while len(packages) > 0:
+            [
+                tags.append(tag)
+                for package in packages
+                for tag in package["metadata"]["container"]["tags"]
+            ]
+            page_num += 1
+            response = requests.get(
+                f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions?page={page_num}",
+                headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
+            )
+            if not response.ok:
+                print(
+                    f"Error pulling image tag page {page_num} from GHCR for {image_name}: {response.content}"
+                )
+                return None
+            packages = response.json()
+
         if not tags:
             return None
     elif registry == "quay.io":
@@ -413,8 +428,8 @@ def send_discord_notification(message):
         "message": message,
     }
     response = requests.post(url, json=request)
-    if response.status_code > 299:
-        print(response.text)
+    if not response.ok:
+        print(f"Error sending discord message to ponyboy: {response.content}")
 
 
 if __name__ == "__main__":
