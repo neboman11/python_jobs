@@ -20,110 +20,138 @@ import jobs_common
 
 
 def main(dry_run: bool):
+    # Initialize GitHub connection
     load_dotenv()
     github_PAT = os.getenv("GITHUB_PAT")
-
-    # using an access token
     auth = Auth.Token(github_PAT)
-
-    # First create a Github instance:
-    # Public Web Github
     gh = Github(auth=auth)
-
     argo_repo = gh.get_repo("neboman11/argocd-definitions")
     repo_contents = argo_repo.get_contents("/")
 
     print("Finding kustomize and deployment files in repo")
-    kustomize_files: list[ContentFile.ContentFile] = []
-    deployment_files: list[ContentFile.ContentFile] = []
-    find_kustomize_and_deployment_files(
-        argo_repo, repo_contents, kustomize_files, deployment_files
-    )
+    kustomize_files, deployment_files = get_files(argo_repo, repo_contents)
 
-    print("Checking helm chart versions for update")
-    files_needing_updates = kustomize_files_find_helm_charts_with_updates(
-        kustomize_files
-    )
+    print("Checking for updates")
+    helm_updates = find_helm_updates(kustomize_files)
+    image_updates = find_image_updates(deployment_files)
 
-    print("Checking image tags for update")
-    image_files_needing_updates = deployment_files_find_image_updates(deployment_files)
-
-    if len(files_needing_updates) > 0 or len(image_files_needing_updates) > 0:
-        date_string = datetime.now().strftime("%Y-%m-%d")
-        new_branch_name = f"service_update/{date_string}"
-
-        charts_to_directly_update = list(
-            filter(chart_updates_with_minor_or_patch_filter, files_needing_updates)
-        )
-
-        if len(charts_to_directly_update) > 0:
-            if not dry_run:
-                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
-                commit_updates_to_branch(
-                    argo_repo, target_branch.ref, charts_to_directly_update
-                )
-                non_major_pull_request = create_pull_request_for_updates(
-                    argo_repo,
-                    new_branch_name,
-                )
-
-                non_major_pull_request.merge()
-
-            jobs_common.send_discord_notification(
-                "Updated versions for "
-                + ", ".join(
-                    [chart["release_name"] for chart in charts_to_directly_update]
-                )
-            )
-
-        charts_with_major_version = list(
-            filter(
-                lambda x: not chart_updates_with_minor_or_patch_filter(x),
-                files_needing_updates,
-            )
-        )
-
-        if len(charts_with_major_version) > 0:
-            if not dry_run:
-                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
-                commit_updates_to_branch(
-                    argo_repo, target_branch.ref, charts_with_major_version
-                )
-                non_major_pull_request = create_pull_request_for_updates(
-                    argo_repo,
-                    new_branch_name,
-                )
-
-            jobs_common.send_discord_notification(
-                "Created PR for major version bumps on "
-                + ", ".join(
-                    [chart["release_name"] for chart in charts_with_major_version]
-                )
-            )
-
-        if len(image_files_needing_updates) > 0:
-            if not dry_run:
-                target_branch = create_branch_for_updates(argo_repo, new_branch_name)
-                commit_image_updates_to_branch(
-                    argo_repo, target_branch.ref, image_files_needing_updates
-                )
-                image_pull_request = create_pull_request_for_updates(
-                    argo_repo,
-                    new_branch_name,
-                )
-
-            jobs_common.send_discord_notification(
-                "Updated image tags for "
-                + ", ".join(
-                    [image["image_name"] for image in image_files_needing_updates]
-                )
-            )
-
-    else:
+    if not (helm_updates or image_updates):
         print("Found no charts or images to update")
+        return
+
+    date_string = datetime.now().strftime("%Y-%m-%d")
+    new_branch_name = f"service_update/{date_string}"
+
+    handle_updates(
+        argo_repo,
+        new_branch_name,
+        dry_run,
+        helm_updates,
+        image_updates,
+    )
 
     if dry_run:
         print("Dry run complete. No changes were committed.")
+
+
+def get_files(repo, contents):
+    kustomize_files = []
+    deployment_files = []
+    find_kustomize_and_deployment_files(
+        repo, contents, kustomize_files, deployment_files
+    )
+    return kustomize_files, deployment_files
+
+
+def find_helm_updates(files):
+    updates = kustomize_files_find_helm_charts_with_updates(files)
+    return updates
+
+
+def find_image_updates(files):
+    updates = deployment_files_find_image_updates(files)
+    return updates
+
+
+def handle_updates(repo, branch_name, dry_run, helm_updates, image_updates):
+    if helm_updates:
+        charts_to_update = filter_updates(
+            helm_updates, chart_updates_with_minor_or_patch_filter
+        )
+        if charts_to_update:
+            handle_chart_updates(repo, branch_name, dry_run, charts_to_update)
+
+        charts_major = filter_updates(
+            helm_updates, lambda x: not chart_updates_with_minor_or_patch_filter(x)
+        )
+        if charts_major:
+            handle_chart_updates(
+                repo, branch_name, dry_run, charts_major, is_major=True
+            )
+
+    if image_updates:
+        images_to_update = filter_updates(
+            image_updates, image_updates_with_minor_or_patch_filter
+        )
+        if images_to_update:
+            handle_image_updates(repo, branch_name, dry_run, images_to_update)
+
+        images_major = filter_updates(
+            image_updates, lambda x: not image_updates_with_minor_or_patch_filter(x)
+        )
+        if images_major:
+            handle_image_updates(
+                repo, branch_name, dry_run, images_major, is_major=True
+            )
+
+
+def filter_updates(updates, filter_func):
+    return list(filter(filter_func, updates))
+
+
+def handle_chart_updates(repo, branch_name, dry_run, charts, is_major=False):
+    if not dry_run:
+        target_branch = create_branch_for_updates(repo, branch_name)
+        commit_updates_to_branch(repo, target_branch.ref, charts)
+        pr = create_pull_request_for_updates(repo, branch_name, is_major=is_major)
+        if not is_major:
+            pr.merge()
+
+    notification_type = "major version bumps on" if is_major else "updates for"
+    send_notification(
+        f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([chart['release_name'] for chart in charts])}"
+    )
+
+
+def image_updates_with_minor_or_patch_filter(image_update):
+    split_original_tag = image_update["current_tag"].split(".")
+    split_new_tag = image_update["new_tag"].split(".")
+
+    if len(split_original_tag) < 2 or len(split_new_tag) < 2:
+        return False
+
+    if split_original_tag[0] != split_new_tag[0]:
+        return False
+
+    return True
+
+
+def handle_image_updates(repo, branch_name, dry_run, images, is_major=False):
+    if not dry_run:
+        target_branch = create_branch_for_updates(repo, branch_name)
+        commit_image_updates_to_branch(repo, target_branch.ref, images)
+        pr = create_pull_request_for_updates(repo, branch_name, is_major=is_major)
+        if not is_major:
+            pr.merge()
+
+    notification_type = "major version bumps on" if is_major else "updates for"
+    send_notification(
+        f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([image['image_name'] for image in images])}"
+    )
+
+
+def send_notification(message):
+    jobs_common.send_discord_notification(message)
 
 
 def create_pull_request_for_updates(argo_repo, new_branch_name: str):
