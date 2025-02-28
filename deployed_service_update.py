@@ -113,7 +113,7 @@ def handle_chart_updates(repo, branch_name, dry_run, charts, is_major=False):
     if not dry_run:
         target_branch = create_branch_for_updates(repo, branch_name)
         commit_updates_to_branch(repo, target_branch.ref, charts)
-        pr = create_pull_request_for_updates(repo, branch_name, is_major=is_major)
+        pr = create_pull_request_for_updates(repo, branch_name)
         if not is_major:
             pr.merge()
 
@@ -140,7 +140,7 @@ def handle_image_updates(repo, branch_name, dry_run, images, is_major=False):
     if not dry_run:
         target_branch = create_branch_for_updates(repo, branch_name)
         commit_image_updates_to_branch(repo, target_branch.ref, images)
-        pr = create_pull_request_for_updates(repo, branch_name, is_major=is_major)
+        pr = create_pull_request_for_updates(repo, branch_name)
         if not is_major:
             pr.merge()
 
