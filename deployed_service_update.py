@@ -29,13 +29,14 @@ def main(dry_run: bool):
     repo_contents = argo_repo.get_contents("/")
 
     print("Finding kustomize and deployment files in repo")
-    kustomize_files, deployment_files = get_files(argo_repo, repo_contents)
+    kustomize_files, deployment_files, chart_files = get_files(argo_repo, repo_contents)
 
     print("Checking for updates")
     helm_updates = find_helm_updates(kustomize_files)
     image_updates = find_image_updates(deployment_files)
+    chart_updates = find_chart_updates(chart_files)
 
-    if not (helm_updates or image_updates):
+    if not (helm_updates or image_updates or chart_updates):
         print("Found no charts or images to update")
         return
 
@@ -43,11 +44,7 @@ def main(dry_run: bool):
     new_branch_name = f"service_update/{date_string}"
 
     handle_updates(
-        argo_repo,
-        new_branch_name,
-        dry_run,
-        helm_updates,
-        image_updates,
+        argo_repo, new_branch_name, dry_run, helm_updates, image_updates, chart_updates
     )
 
     if dry_run:
@@ -57,14 +54,20 @@ def main(dry_run: bool):
 def get_files(repo, contents):
     kustomize_files = []
     deployment_files = []
+    chart_files = []
     find_kustomize_and_deployment_files(
-        repo, contents, kustomize_files, deployment_files
+        repo, contents, kustomize_files, deployment_files, chart_files
     )
-    return kustomize_files, deployment_files
+    return kustomize_files, deployment_files, chart_files
 
 
 def find_helm_updates(files):
     updates = kustomize_files_find_helm_charts_with_updates(files)
+    return updates
+
+
+def find_chart_updates(files):
+    updates = chart_files_find_chart_updates(files)
     return updates
 
 
@@ -73,7 +76,9 @@ def find_image_updates(files):
     return updates
 
 
-def handle_updates(repo, branch_name, dry_run, helm_updates, image_updates):
+def handle_updates(
+    repo, branch_name, dry_run, helm_updates, image_updates, chart_updates
+):
     if helm_updates:
         charts_to_update = filter_updates(
             helm_updates, chart_updates_with_minor_or_patch_filter
@@ -104,6 +109,21 @@ def handle_updates(repo, branch_name, dry_run, helm_updates, image_updates):
                 repo, branch_name, dry_run, images_major, is_major=True
             )
 
+    if chart_updates:
+        charts_to_update = filter_updates(
+            chart_updates, chart_updates_with_minor_or_patch_filter
+        )
+        if charts_to_update:
+            handle_chart_updates(repo, branch_name, dry_run, charts_to_update)
+
+        charts_major = filter_updates(
+            chart_updates, lambda x: not chart_updates_with_minor_or_patch_filter(x)
+        )
+        if charts_major:
+            handle_chart_updates(
+                repo, branch_name, dry_run, charts_major, is_major=True
+            )
+
 
 def filter_updates(updates, filter_func):
     return list(filter(filter_func, updates))
@@ -117,7 +137,7 @@ def handle_chart_updates(repo, branch_name, dry_run, charts, is_major=False):
         if not is_major:
             pr.merge()
 
-    notification_type = "major version bumps on" if is_major else "updates for"
+    notification_type = "major version bumps on" if is_major else "versions"
     send_notification(
         f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([chart['release_name'] for chart in charts])}"
     )
@@ -223,6 +243,25 @@ def commit_image_updates_to_branch(
         )
 
 
+def commit_chart_updates_to_branch(
+    argo_repo: Repository.Repository,
+    target_branch_ref: str,
+    files_needing_updates: list[dict[str, Any]],
+):
+    print("Committing changes to update chart dependencies")
+    for file in files_needing_updates:
+        file_content_stream = io.StringIO()
+        yaml.dump(file["chart_file"], file_content_stream)
+        file_content_stream.seek(0)
+        argo_repo.update_file(
+            file["path"],
+            f"Bump {file['chart_name']} version to {file['new_version']}",
+            file_content_stream.getvalue(),
+            file["sha"],
+            target_branch_ref,
+        )
+
+
 def kustomize_files_find_helm_charts_with_updates(
     kustomize_files: list[ContentFile.ContentFile],
 ):
@@ -238,6 +277,60 @@ def kustomize_files_find_helm_charts_with_updates(
                 updated_file["sha"] = kustomize_file.sha
                 files_needing_updates.append(updated_file)
     return files_needing_updates
+
+
+def chart_files_find_chart_updates(chart_files):
+    files_needing_updates: list[dict[str, Any]] = []
+    for chart_file in chart_files:
+        file_stream = io.BytesIO(chart_file.decoded_content)
+        parsed_file = yaml.safe_load(file_stream)
+        updated_file = check_for_chart_update(parsed_file)
+        if updated_file != None:
+            updated_file["path"] = chart_file.path
+            updated_file["sha"] = chart_file.sha
+            files_needing_updates.append(updated_file)
+    return files_needing_updates
+
+
+def check_for_chart_update(chart_file: dict):
+    dependencies = chart_file.get("dependencies", [])
+    for dependency in dependencies:
+        chart_name = dependency["name"]
+        chart_repo = dependency["repository"]
+        if not chart_repo.endswith("/"):
+            chart_repo += "/"
+
+        response = requests.get(f"{chart_repo}index.yaml")
+        if not response.ok:
+            print(
+                f"Error pulling latest chart index from {chart_repo} for {chart_name}: {response.content}"
+            )
+            continue
+        repository_index = yaml.safe_load(io.BytesIO(response.content))
+
+        remote_versions = [
+            chart["version"]
+            for chart in repository_index["entries"].get(chart_name, [])
+        ]
+
+        remote_versions = list(
+            filter(
+                lambda x: "dev" not in x and "alpha" not in x and "beta" not in x,
+                remote_versions,
+            )
+        )
+
+        remote_versions = list(natsorted(remote_versions, reverse=True))
+
+        if remote_versions and remote_versions[0] != dependency["version"]:
+            original_version = dependency["version"]
+            dependency["version"] = remote_versions[0]
+            return {
+                "chart_file": chart_file,
+                "original_version": original_version,
+                "new_version": remote_versions[0],
+                "chart_name": chart_name,
+            }
 
 
 def check_for_helm_chart_update(kustomize_file: dict):
@@ -292,16 +385,23 @@ def find_kustomize_and_deployment_files(
     repo_files: list[ContentFile.ContentFile],
     kustomize_file_list: list[ContentFile.ContentFile],
     deployment_file_list: list[ContentFile.ContentFile],
+    chart_file_list: list[ContentFile.ContentFile],
 ):
     for file in repo_files:
         if file.type == "file" and file.name == "kustomization.yaml":
             kustomize_file_list.append(file)
-        if file.type == "file" and file.name == "deployment.yaml":
+        if file.type == "file" and file.name.endswith("deployment.yaml"):
             deployment_file_list.append(file)
+        if file.type == "file" and file.name == "Chart.yaml":
+            chart_file_list.append(file)
         if file.type == "dir" and file.name != "overlays":
             folder_contents = argo_repo.get_contents(f"/{file.path}")
             find_kustomize_and_deployment_files(
-                argo_repo, folder_contents, kustomize_file_list, deployment_file_list
+                argo_repo,
+                folder_contents,
+                kustomize_file_list,
+                deployment_file_list,
+                chart_file_list,
             )
 
 
