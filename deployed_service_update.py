@@ -23,6 +23,10 @@ def main(dry_run: bool):
     # Initialize GitHub connection
     load_dotenv()
     github_PAT = os.getenv("GITHUB_PAT")
+    if github_PAT is None:
+        print("GitHub token not set")
+        exit(1)
+
     auth = Auth.Token(github_PAT)
     gh = Github(auth=auth)
     argo_repo = gh.get_repo("neboman11/argocd-definitions")
@@ -215,10 +219,11 @@ def commit_updates_to_branch(
         file_content_stream = io.StringIO()
         yaml.dump(file["kustomize_file"], file_content_stream)
         file_content_stream.seek(0)
+        file_contents = file_content_stream.getvalue()
         argo_repo.update_file(
             file["path"],
             f"Bump {file['release_name']} version to {file['new_version']}",
-            file_content_stream.getvalue(),
+            file_contents,
             file["sha"],
             target_branch_ref,
         )
@@ -268,14 +273,17 @@ def kustomize_files_find_helm_charts_with_updates(
     files_needing_updates: list[dict[str, Any]] = []
     for kustomize_file in kustomize_files:
         file_stream = io.BytesIO(kustomize_file.decoded_content)
-        parsed_file = yaml.safe_load(file_stream)
-        # Check that the file contains a helm chart
-        if "helmCharts" in parsed_file:
-            updated_file = check_for_helm_chart_update(parsed_file)
-            if updated_file != None:
-                updated_file["path"] = kustomize_file.path
-                updated_file["sha"] = kustomize_file.sha
-                files_needing_updates.append(updated_file)
+        try:
+            parsed_file = yaml.safe_load(file_stream)
+            # Check that the file contains a helm chart
+            if "helmCharts" in parsed_file:
+                updated_file = check_for_helm_chart_update(parsed_file)
+                if updated_file != None:
+                    updated_file["path"] = kustomize_file.path
+                    updated_file["sha"] = kustomize_file.sha
+                    files_needing_updates.append(updated_file)
+        except yaml.YAMLError as ex:
+            print(f"Unable to load yaml contents of file {kustomize_file.path}: {ex}")
     return files_needing_updates
 
 
@@ -283,12 +291,15 @@ def chart_files_find_chart_updates(chart_files):
     files_needing_updates: list[dict[str, Any]] = []
     for chart_file in chart_files:
         file_stream = io.BytesIO(chart_file.decoded_content)
-        parsed_file = yaml.safe_load(file_stream)
-        updated_file = check_for_chart_update(parsed_file)
-        if updated_file != None:
-            updated_file["path"] = chart_file.path
-            updated_file["sha"] = chart_file.sha
-            files_needing_updates.append(updated_file)
+        try:
+            parsed_file = yaml.safe_load(file_stream)
+            updated_file = check_for_chart_update(parsed_file)
+            if updated_file != None:
+                updated_file["path"] = chart_file.path
+                updated_file["sha"] = chart_file.sha
+                files_needing_updates.append(updated_file)
+        except yaml.YAMLError as ex:
+            print(f"Unable to load yaml contents of file {chart_file.path}: {ex}")
     return files_needing_updates
 
 
@@ -396,6 +407,8 @@ def find_kustomize_and_deployment_files(
             chart_file_list.append(file)
         if file.type == "dir" and file.name != "overlays":
             folder_contents = argo_repo.get_contents(f"/{file.path}")
+            if not isinstance(folder_contents, list):
+                folder_contents = [folder_contents]
             find_kustomize_and_deployment_files(
                 argo_repo,
                 folder_contents,
@@ -411,12 +424,20 @@ def deployment_files_find_image_updates(
     files_needing_updates: list[dict[str, Any]] = []
     for deployment_file in deployment_files:
         file_stream = io.BytesIO(deployment_file.decoded_content)
-        parsed_file = yaml.safe_load(file_stream)
-        updated_file = check_for_image_update(parsed_file)
-        if updated_file != None:
-            updated_file["path"] = deployment_file.path
-            updated_file["sha"] = deployment_file.sha
-            files_needing_updates.append(updated_file)
+        try:
+            # Regular expression to match Helm template directives
+            helm_template_regex = re.compile(r"\{\{.*?\}\}")
+            sanitized_content = helm_template_regex.sub(
+                "value", file_stream.read().decode()
+            )
+            parsed_file = yaml.safe_load(sanitized_content)
+            updated_file = check_for_image_update(parsed_file)
+            if updated_file != None:
+                updated_file["path"] = deployment_file.path
+                updated_file["sha"] = deployment_file.sha
+                files_needing_updates.append(updated_file)
+        except yaml.YAMLError as ex:
+            print(f"Unable to load yaml contents of file {deployment_file.path}: {ex}")
     return files_needing_updates
 
 
@@ -550,9 +571,13 @@ def get_latest_image_tag(image_name: str):
 
 
 def send_discord_notification(message):
+    user_id = os.getenv("NOTIFY_DISCORD_USER")
+    if user_id == None:
+        print("Discord user ID not set, unable to send notifications")
+        return
     url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
     request = {
-        "user_id": int(os.getenv("NOTIFY_DISCORD_USER")),
+        "user_id": int(user_id),
         "message": message,
     }
     response = requests.post(url, json=request)
