@@ -284,6 +284,7 @@ def kustomize_files_find_helm_charts_with_updates(
                     files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {kustomize_file.path}: {ex}")
+            send_discord_notification(f"Yaml parsing failed for {kustomize_file.path}")
     return files_needing_updates
 
 
@@ -300,6 +301,7 @@ def chart_files_find_chart_updates(chart_files):
                 files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {chart_file.path}: {ex}")
+            send_discord_notification(f"Yaml parsing failed for {chart_file.path}")
     return files_needing_updates
 
 
@@ -425,12 +427,7 @@ def deployment_files_find_image_updates(
     for deployment_file in deployment_files:
         file_stream = io.BytesIO(deployment_file.decoded_content)
         try:
-            # Regular expression to match Helm template directives
-            helm_template_regex = re.compile(r"\{\{.*?\}\}")
-            sanitized_content = helm_template_regex.sub(
-                "value", file_stream.read().decode()
-            )
-            parsed_file = yaml.safe_load(sanitized_content)
+            parsed_file = yaml.safe_load(file_stream)
             updated_file = check_for_image_update(parsed_file)
             if updated_file != None:
                 updated_file["path"] = deployment_file.path
@@ -438,6 +435,7 @@ def deployment_files_find_image_updates(
                 files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {deployment_file.path}: {ex}")
+            send_discord_notification(f"Yaml parsing failed for {deployment_file.path}")
     return files_needing_updates
 
 
@@ -570,19 +568,20 @@ def get_latest_image_tag(image_name: str):
     return latest_tag
 
 
-def send_discord_notification(message):
-    user_id = os.getenv("NOTIFY_DISCORD_USER")
-    if user_id == None:
-        print("Discord user ID not set, unable to send notifications")
-        return
-    url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
-    request = {
-        "user_id": int(user_id),
-        "message": message,
-    }
-    response = requests.post(url, json=request)
-    if not response.ok:
-        print(f"Error sending discord message to ponyboy: {response.content}")
+def send_discord_notification(message: str):
+    # user_id = os.getenv("NOTIFY_DISCORD_USER")
+    # if user_id == None:
+    #     print("Discord user ID not set, unable to send notifications")
+    #     return
+    # url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
+    # request = {
+    #     "user_id": int(user_id),
+    #     "message": message,
+    # }
+    # response = requests.post(url, json=request)
+    # if not response.ok:
+    #     print(f"Error sending discord message to ponyboy: {response.content}")
+    pass
 
 
 if __name__ == "__main__":
