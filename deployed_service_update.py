@@ -1,5 +1,5 @@
-import base64
 from datetime import datetime
+from enum import Enum
 import io
 import os
 import re
@@ -17,6 +17,12 @@ import requests
 import yaml
 
 import jobs_common
+
+
+class UpdateType(Enum):
+    KustomizeChart = 0
+    Image = 1
+    HelmChart = 2
 
 
 def main(dry_run: bool):
@@ -47,7 +53,7 @@ def main(dry_run: bool):
     date_string = datetime.now().strftime("%Y-%m-%d")
     new_branch_name = f"service_update/{date_string}"
 
-    handle_updates(
+    handle_all_updates(
         argo_repo, new_branch_name, dry_run, helm_updates, image_updates, chart_updates
     )
 
@@ -80,52 +86,78 @@ def find_image_updates(files):
     return updates
 
 
-def handle_updates(
-    repo, branch_name, dry_run, helm_updates, image_updates, chart_updates
+def handle_all_updates(
+    repo, branch_name, dry_run, kustomize_charts_updates, image_updates, chart_updates
 ):
-    if helm_updates:
-        charts_to_update = filter_updates(
-            helm_updates, chart_updates_with_minor_or_patch_filter
+    if kustomize_charts_updates:
+        minor_update_charts = filter_updates(
+            kustomize_charts_updates, chart_updates_with_minor_or_patch_filter
         )
-        if charts_to_update:
-            handle_chart_updates(repo, branch_name, dry_run, charts_to_update)
+        if minor_update_charts:
+            handle_updates(
+                repo,
+                branch_name,
+                dry_run,
+                minor_update_charts,
+                UpdateType.KustomizeChart,
+            )
 
-        charts_major = filter_updates(
-            helm_updates, lambda x: not chart_updates_with_minor_or_patch_filter(x)
+        major_update_charts = filter_updates(
+            kustomize_charts_updates,
+            lambda x: not chart_updates_with_minor_or_patch_filter(x),
         )
-        if charts_major:
-            handle_chart_updates(
-                repo, branch_name, dry_run, charts_major, is_major=True
+        if major_update_charts:
+            handle_updates(
+                repo,
+                branch_name,
+                dry_run,
+                major_update_charts,
+                UpdateType.KustomizeChart,
+                is_major=True,
             )
 
     if image_updates:
-        images_to_update = filter_updates(
+        minor_update_images = filter_updates(
             image_updates, image_updates_with_minor_or_patch_filter
         )
-        if images_to_update:
-            handle_image_updates(repo, branch_name, dry_run, images_to_update)
+        if minor_update_images:
+            handle_updates(
+                repo, branch_name, dry_run, minor_update_images, UpdateType.Image
+            )
 
-        images_major = filter_updates(
+        major_update_images = filter_updates(
             image_updates, lambda x: not image_updates_with_minor_or_patch_filter(x)
         )
-        if images_major:
-            handle_image_updates(
-                repo, branch_name, dry_run, images_major, is_major=True
+        if major_update_images:
+            handle_updates(
+                repo,
+                branch_name,
+                dry_run,
+                major_update_images,
+                UpdateType.Image,
+                is_major=True,
             )
 
     if chart_updates:
-        charts_to_update = filter_updates(
+        minor_update_charts = filter_updates(
             chart_updates, chart_updates_with_minor_or_patch_filter
         )
-        if charts_to_update:
-            handle_chart_updates(repo, branch_name, dry_run, charts_to_update)
+        if minor_update_charts:
+            handle_updates(
+                repo, branch_name, dry_run, minor_update_charts, UpdateType.HelmChart
+            )
 
-        charts_major = filter_updates(
+        major_update_charts = filter_updates(
             chart_updates, lambda x: not chart_updates_with_minor_or_patch_filter(x)
         )
-        if charts_major:
-            handle_chart_updates(
-                repo, branch_name, dry_run, charts_major, is_major=True
+        if major_update_charts:
+            handle_updates(
+                repo,
+                branch_name,
+                dry_run,
+                major_update_charts,
+                UpdateType.HelmChart,
+                is_major=True,
             )
 
 
@@ -133,18 +165,37 @@ def filter_updates(updates, filter_func):
     return list(filter(filter_func, updates))
 
 
-def handle_chart_updates(repo, branch_name, dry_run, charts, is_major=False):
+def handle_updates(
+    repo, branch_name, dry_run, update_objects, update_type: UpdateType, is_major=False
+):
     if not dry_run:
         target_branch = create_branch_for_updates(repo, branch_name)
-        commit_updates_to_branch(repo, target_branch.ref, charts)
+        match update_type:
+            case UpdateType.KustomizeChart:
+                print("Committing changes to update helm charts")
+            case UpdateType.Image:
+                print("Committing changes to update image tags")
+            case UpdateType.HelmChart:
+                print("Committing changes to update chart dependencies")
+        commit_updates_to_branch(repo, target_branch.ref, update_objects)
         pr = create_pull_request_for_updates(repo, branch_name)
         if not is_major:
             pr.merge()
 
     notification_type = "major version bumps on" if is_major else "versions"
-    send_notification(
-        f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([chart['release_name'] for chart in charts])}"
-    )
+    match update_type:
+        case UpdateType.KustomizeChart:
+            send_notification(
+                f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([chart['release_name'] for chart in update_objects])}"
+            )
+        case UpdateType.Image:
+            send_notification(
+                f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([image['image_name'] for image in update_objects])}"
+            )
+        case UpdateType.HelmChart:
+            send_notification(
+                f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([chart['chart_name'] for chart in update_objects])}"
+            )
 
 
 def image_updates_with_minor_or_patch_filter(image_update):
@@ -158,20 +209,6 @@ def image_updates_with_minor_or_patch_filter(image_update):
         return False
 
     return True
-
-
-def handle_image_updates(repo, branch_name, dry_run, images, is_major=False):
-    if not dry_run:
-        target_branch = create_branch_for_updates(repo, branch_name)
-        commit_image_updates_to_branch(repo, target_branch.ref, images)
-        pr = create_pull_request_for_updates(repo, branch_name)
-        if not is_major:
-            pr.merge()
-
-    notification_type = "major version bumps on" if is_major else "updates for"
-    send_notification(
-        f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([image['image_name'] for image in images])}"
-    )
 
 
 def send_notification(message):
@@ -214,57 +251,43 @@ def commit_updates_to_branch(
     target_branch_ref: str,
     files_needing_updates: list[dict[str, Any]],
 ):
-    print("Committing changes to update helm charts")
     for file in files_needing_updates:
-        file_content_stream = io.StringIO()
-        yaml.dump(file["kustomize_file"], file_content_stream)
-        file_content_stream.seek(0)
-        file_contents = file_content_stream.getvalue()
-        argo_repo.update_file(
-            file["path"],
-            f"Bump {file['release_name']} version to {file['new_version']}",
-            file_contents,
-            file["sha"],
-            target_branch_ref,
-        )
-
-
-def commit_image_updates_to_branch(
-    argo_repo: Repository.Repository,
-    target_branch_ref: str,
-    files_needing_updates: list[dict[str, Any]],
-):
-    print("Committing changes to update image tags")
-    for file in files_needing_updates:
-        file_content_stream = io.StringIO()
-        yaml.dump(file["deployment_file"], file_content_stream)
-        file_content_stream.seek(0)
-        argo_repo.update_file(
-            file["path"],
-            f"Bump {file['image_name']} image tag to {file['new_tag']}",
-            file_content_stream.getvalue(),
-            file["sha"],
-            target_branch_ref,
-        )
-
-
-def commit_chart_updates_to_branch(
-    argo_repo: Repository.Repository,
-    target_branch_ref: str,
-    files_needing_updates: list[dict[str, Any]],
-):
-    print("Committing changes to update chart dependencies")
-    for file in files_needing_updates:
-        file_content_stream = io.StringIO()
-        yaml.dump(file["chart_file"], file_content_stream)
-        file_content_stream.seek(0)
-        argo_repo.update_file(
-            file["path"],
-            f"Bump {file['chart_name']} version to {file['new_version']}",
-            file_content_stream.getvalue(),
-            file["sha"],
-            target_branch_ref,
-        )
+        if "kustomize_file" in file:
+            file_content_stream = io.StringIO()
+            yaml.dump(file["kustomize_file"], file_content_stream)
+            file_content_stream.seek(0)
+            file_contents = file_content_stream.getvalue()
+            argo_repo.update_file(
+                file["path"],
+                f"Bump {file['release_name']} version to {file['new_version']}",
+                file_contents,
+                file["sha"],
+                target_branch_ref,
+            )
+        elif "deployment_file" in file:
+            file_content_stream = io.StringIO()
+            yaml.dump(file["deployment_file"], file_content_stream)
+            file_content_stream.seek(0)
+            argo_repo.update_file(
+                file["path"],
+                f"Bump {file['image_name']} image tag to {file['new_tag']}",
+                file_content_stream.getvalue(),
+                file["sha"],
+                target_branch_ref,
+            )
+        elif "chart_file" in file:
+            file_content_stream = io.StringIO()
+            yaml.dump(file["chart_file"], file_content_stream)
+            file_content_stream.seek(0)
+            argo_repo.update_file(
+                file["path"],
+                f"Bump {file['chart_name']} version to {file['new_version']}",
+                file_content_stream.getvalue(),
+                file["sha"],
+                target_branch_ref,
+            )
+        else:
+            print(f"Unable to add file to commit: {file}")
 
 
 def kustomize_files_find_helm_charts_with_updates(
