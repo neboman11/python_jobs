@@ -15,7 +15,7 @@ jobs:
     strategy:
       matrix:
         job: [cabin_temp_notif, service_update]
-    if: startsWith(github.ref_name, matrix.job)
+
     permissions:
       contents: read
       packages: write
@@ -32,6 +32,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels) for Docker
+        if: startsWith(github.ref_name, matrix.job)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -40,6 +41,7 @@ jobs:
             type=match,pattern=${{ matrix.job }}-(v.+),group=1
 
       - name: Build and push Docker image
+        if: startsWith(github.ref_name, matrix.job)
         uses: docker/build-push-action@v5
         with:
           context: .
