@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        job: [cabin-temp-notif, service-update]
+        job: [cabin_temp_notif, service_update]
     permissions:
       contents: read
       packages: write
@@ -45,7 +45,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./jobs/${{ replace(matrix.job, '-', '_') }}/Dockerfile
+          file: ./jobs/${{ matrix.job }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
