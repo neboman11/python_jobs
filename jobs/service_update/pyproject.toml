@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "service-update"
-version = "1.1.0"
+version = "1.1.1"
 description = "Service update job for k8s deployments"
 requires-python = ">=3.12"
 dependencies = [
-    "PyGithub==2.2.0",
-    "natsort==8.4.0",
-    "PyYAML==6.0.1",
-    "requests==2.32.4",
-    "jobs-common",
+  "PyGithub==2.2.0",
+  "natsort==8.4.0",
+  "PyYAML==6.0.1",
+  "requests==2.32.4",
+  "jobs-common",
 ]
 
 [tool.hatch.metadata]
@@ -25,6 +25,4 @@ packages = ["jobs/service_update"]
 jobs-common = { workspace = true }
 
 [tool.uv.workspace]
-members = [
-  "../../common"
-]
+members = ["../../common"]
