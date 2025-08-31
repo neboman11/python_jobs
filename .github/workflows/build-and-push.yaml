@@ -15,6 +15,7 @@ jobs:
     strategy:
       matrix:
         job: [cabin_temp_notif, service_update]
+    if: startsWith(github.ref_name, matrix.job)
     permissions:
       contents: read
       packages: write
@@ -36,9 +37,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.job }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha
             type=match,pattern=${{ matrix.job }}-(v.+),group=1
 
       - name: Build and push Docker image
