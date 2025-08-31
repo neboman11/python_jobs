@@ -220,7 +220,7 @@ def image_updates_with_minor_or_patch_filter(image_update):
 
 
 def send_notification(message):
-    jobs_common.send_discord_notification(message)
+    jobs_common.send_notification(message)
 
 
 def create_pull_request_for_updates(argo_repo, new_branch_name: str):

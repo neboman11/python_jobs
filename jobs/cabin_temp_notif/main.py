@@ -21,8 +21,8 @@ def get_monitored_temperature(one_week_from_today):
     return response.json()["temperature"]["min"]
 
 
-def send_discord_notification(next_week_min_temp, next_week_date):
-    jobs_common.send_discord_notification(
+def send_notification(next_week_min_temp, next_week_date):
+    jobs_common.send_notification(
         f"WARNING: Temperature at the cabin will be {next_week_min_temp} on {next_week_date}.",
     )
 
@@ -42,7 +42,7 @@ def main():
         sys.exit(1)
 
     if next_week_min_temp <= TEMPERATURE_THRESHOLD:
-        send_discord_notification(next_week_min_temp, one_week_from_today)
+        send_notification(next_week_min_temp, one_week_from_today)
 
 
 if __name__ == "__main__":
