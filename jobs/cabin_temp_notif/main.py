@@ -1,25 +1,23 @@
 import datetime
 import os
+import sys
 
-from dotenv import load_dotenv
 import requests
 
 import jobs_common
 
 
-monitored_city_latitude = "33.99755743650663"
-monitored_city_longitude = "-96.72286077920174"
-temperature_threshold = 34
+MONITORED_CITY_LATITUDE = "33.99755743650663"
+MONITORED_CITY_LONGITUDE = "-96.72286077920174"
+TEMPERATURE_THRESHOLD = 34
 
 
 def get_monitored_temperature(one_week_from_today):
-    global monitored_city_latitude
-    global monitored_city_longitude
-
-    url = f"https://api.openweathermap.org/data/3.0/onecall/day_summary?lat={monitored_city_latitude}&lon={monitored_city_longitude}&date={one_week_from_today}&units=imperial&appid={os.getenv('OPEN_WEATHER_API_TOKEN')}"
+    url = f"https://api.openweathermap.org/data/3.0/onecall/day_summary?lat={MONITORED_CITY_LATITUDE}&lon={MONITORED_CITY_LONGITUDE}&date={one_week_from_today}&units=imperial&appid={os.getenv('OPEN_WEATHER_API_TOKEN')}"
     response = requests.get(url)
     if response.status_code > 299:
         print(response.text)
+        return None
     return response.json()["temperature"]["min"]
 
 
@@ -30,14 +28,20 @@ def send_discord_notification(next_week_min_temp, next_week_date):
 
 
 def main():
-    global temperature_threshold
+    # Validate required environment variables
+    if not os.getenv("OPEN_WEATHER_API_TOKEN"):
+        print("Error: OPEN_WEATHER_API_TOKEN environment variable is required")
+        sys.exit(1)
 
-    load_dotenv()
     one_week_from_today = (
         datetime.datetime.now() + datetime.timedelta(days=7)
     ).strftime("%Y-%m-%d")
+
     next_week_min_temp = get_monitored_temperature(one_week_from_today)
-    if next_week_min_temp <= temperature_threshold:
+    if next_week_min_temp is None:
+        sys.exit(1)
+
+    if next_week_min_temp <= TEMPERATURE_THRESHOLD:
         send_discord_notification(next_week_min_temp, one_week_from_today)
 
 

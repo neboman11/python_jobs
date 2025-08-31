@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "service-update"
+version = "1.0.0"
+description = "Service update job for k8s deployments"
+requires-python = ">=3.12"
+dependencies = [
+    "PyGithub==2.2.0",
+    "natsort==8.4.0",
+    "PyYAML==6.0.1",
+    "requests==2.32.4",
+    "jobs-common",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["jobs/service_update"]
+
+[tool.uv.sources]
+jobs-common = { path = "../../common" }

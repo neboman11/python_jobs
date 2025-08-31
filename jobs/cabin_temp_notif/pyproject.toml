@@ -1,0 +1,17 @@
+[project]
+name = "cabin-temp-notif"
+version = "1.0.0"
+description = "Cabin temperature notification job"
+dependencies = [
+    "requests==2.32.4",
+    "jobs-common",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["jobs/service_update"]
+
+[tool.uv.sources]
+jobs-common = { path = "../../common" }

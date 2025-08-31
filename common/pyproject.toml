@@ -1,0 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jobs-common"
+version = "1.0.0"
+description = "Common utilities for Python jobs"
+requires-python = ">=3.12"
+dependencies = ["requests==2.32.4"]

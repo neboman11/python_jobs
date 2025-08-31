@@ -1,7 +1,0 @@
-[[scheduled_job]]
-file = "cabin_temp_notif.py"
-scheduled_run_time = "08:30"
-
-[[scheduled_job]]
-file = "deployed_service_update.py"
-scheduled_run_time = "08:30"

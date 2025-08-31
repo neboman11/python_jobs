@@ -3,10 +3,9 @@ from enum import Enum
 import io
 import os
 import re
+import sys
 from typing import Any
-import argparse
 
-from dotenv import load_dotenv
 from github import Auth
 from github import ContentFile
 from github import Github
@@ -25,13 +24,22 @@ class UpdateType(Enum):
     HelmChart = 2
 
 
-def main(dry_run: bool):
-    # Initialize GitHub connection
-    load_dotenv()
+def main():
+    # Check required environment variables
+    required_vars = ["GITHUB_PAT", "GHCR_TOKEN"]
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        print(
+            f"Error: Missing required environment variables: {', '.join(missing_vars)}"
+        )
+        sys.exit(1)
+
     github_PAT = os.getenv("GITHUB_PAT")
-    if github_PAT is None:
-        print("GitHub token not set")
-        exit(1)
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
+
+    if not github_PAT:
+        print("Error: GITHUB_PAT environment variable is required")
+        sys.exit(1)
 
     auth = Auth.Token(github_PAT)
     gh = Github(auth=auth)
@@ -307,7 +315,7 @@ def kustomize_files_find_helm_charts_with_updates(
                     files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {kustomize_file.path}: {ex}")
-            send_discord_notification(f"Yaml parsing failed for {kustomize_file.path}")
+            send_notification(f"Yaml parsing failed for {kustomize_file.path}")
     return files_needing_updates
 
 
@@ -324,7 +332,7 @@ def chart_files_find_chart_updates(chart_files):
                 files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {chart_file.path}: {ex}")
-            send_discord_notification(f"Yaml parsing failed for {chart_file.path}")
+            send_notification(f"Yaml parsing failed for {chart_file.path}")
     return files_needing_updates
 
 
@@ -369,53 +377,6 @@ def check_for_chart_update(chart_file: dict):
             }
 
 
-def check_for_helm_chart_update(kustomize_file: dict):
-    deployed_chart = kustomize_file["helmCharts"][0]
-    if deployed_chart["namespace"] == "databases":
-        return
-
-    chart_repo = deployed_chart["repo"]
-    if not chart_repo.endswith("/"):
-        chart_repo += "/"
-
-    # Pull the index file containing all the available charts at the repo
-    response = requests.get(f"{chart_repo}index.yaml")
-    if not response.ok:
-        print(
-            f"Error pulling latest chart index from {chart_repo} for {deployed_chart["releaseName"]}: {response.content}"
-        )
-        return
-    repository_index = yaml.safe_load(io.BytesIO(response.content))
-
-    # Select the available chart versions from the repo
-    remote_versions = [
-        chart["version"]
-        for chart in repository_index["entries"][deployed_chart["name"]]
-    ]
-
-    # Filter out prerelease versions
-    remote_versions = list(
-        filter(
-            lambda x: "dev" not in x and "alpha" not in x and "beta" not in x,
-            remote_versions,
-        )
-    )
-
-    # Sort the versions descending so the highest version is at the beginning
-    remote_versions = list(natsorted(remote_versions, reverse=True))
-
-    if remote_versions[0] != deployed_chart["version"]:
-        # Return an object containing the file object with the updated version, the old, version, and the new version
-        original_version = deployed_chart["version"]
-        kustomize_file["helmCharts"][0]["version"] = remote_versions[0]
-        return {
-            "kustomize_file": kustomize_file,
-            "original_version": original_version,
-            "new_version": remote_versions[0],
-            "release_name": deployed_chart["releaseName"],
-        }
-
-
 def find_kustomize_and_deployment_files(
     argo_repo: Repository.Repository,
     repo_files: list[ContentFile.ContentFile],
@@ -458,8 +419,55 @@ def deployment_files_find_image_updates(
                 files_needing_updates.append(updated_file)
         except yaml.YAMLError as ex:
             print(f"Unable to load yaml contents of file {deployment_file.path}: {ex}")
-            send_discord_notification(f"Yaml parsing failed for {deployment_file.path}")
+            send_notification(f"Yaml parsing failed for {deployment_file.path}")
     return files_needing_updates
+
+
+def check_for_helm_chart_update(kustomize_file: dict):
+    deployed_chart = kustomize_file["helmCharts"][0]
+    if deployed_chart["namespace"] == "databases":
+        return
+
+    chart_repo = deployed_chart["repo"]
+    if not chart_repo.endswith("/"):
+        chart_repo += "/"
+
+    # Pull the index file containing all the available charts at the repo
+    response = requests.get(f"{chart_repo}index.yaml")
+    if not response.ok:
+        print(
+            f"Error pulling latest chart index from {chart_repo} for {deployed_chart["releaseName"]}: {response.content}"
+        )
+        return
+    repository_index = yaml.safe_load(io.BytesIO(response.content))
+
+    # Select the available chart versions from the repo
+    remote_versions = [
+        chart["version"]
+        for chart in repository_index["entries"][deployed_chart["name"]]
+    ]
+
+    # Filter out prerelease versions
+    remote_versions = list(
+        filter(
+            lambda x: "dev" not in x and "alpha" not in x and "beta" not in x,
+            remote_versions,
+        )
+    )
+
+    # Sort the versions descending so the highest version is at the beginning
+    remote_versions = list(natsorted(remote_versions, reverse=True))
+
+    if remote_versions[0] != deployed_chart["version"]:
+        # Return an object containing the file object with the updated version, the old version, and the new version
+        original_version = deployed_chart["version"]
+        kustomize_file["helmCharts"][0]["version"] = remote_versions[0]
+        return {
+            "kustomize_file": kustomize_file,
+            "original_version": original_version,
+            "new_version": remote_versions[0],
+            "release_name": deployed_chart["releaseName"],
+        }
 
 
 def check_for_image_update(deployment_file: dict):
@@ -591,26 +599,5 @@ def get_latest_image_tag(image_name: str):
     return latest_tag
 
 
-def send_discord_notification(message: str):
-    # user_id = os.getenv("NOTIFY_DISCORD_USER")
-    # if user_id == None:
-    #     print("Discord user ID not set, unable to send notifications")
-    #     return
-    # url = f"{os.getenv('PONYBOY_BASE_URL')}/send_discord_message"
-    # request = {
-    #     "user_id": int(user_id),
-    #     "message": message,
-    # }
-    # response = requests.post(url, json=request)
-    # if not response.ok:
-    #     print(f"Error sending discord message to ponyboy: {response.content}")
-    pass
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Deployed service update script")
-    parser.add_argument(
-        "--dry-run", "-d", action="store_true", help="Run the script in dry run mode"
-    )
-    args = parser.parse_args()
-    main(args.dry_run)
+    main()
