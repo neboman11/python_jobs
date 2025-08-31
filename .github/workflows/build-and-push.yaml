@@ -45,7 +45,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./jobs/${{ matrix.job }}/Dockerfile
+          file: ${{ env.DOCKERFILE_PATH }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+        env:
+          DOCKERFILE_PATH: ${{ format('./jobs/{0}/Dockerfile', format('{0}', matrix.job) | replace('-', '_')) }}
