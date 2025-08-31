@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir uv
+
 # Copy the common package first
 COPY common/ common
 
@@ -9,6 +11,5 @@ COPY common/ common
 RUN mkdir jobs
 COPY jobs/cabin_temp_notif/ jobs/cabin_temp_notif
 RUN uv pip install --system --no-cache jobs/cabin_temp_notif
-RUN uv pip install --no-cache .
 
 CMD ["python", "main.py"]
