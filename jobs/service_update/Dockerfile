@@ -15,4 +15,4 @@ RUN uv pip install --system --no-cache jobs/service_update
 # Default to non-dry-run mode
 ENV DRY_RUN="false"
 
-CMD ["python", "main.py"]
+CMD ["python", "jobs/service_update/main.py"]

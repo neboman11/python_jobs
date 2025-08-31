@@ -12,4 +12,4 @@ RUN mkdir jobs
 COPY jobs/cabin_temp_notif/ jobs/cabin_temp_notif
 RUN uv pip install --system --no-cache jobs/cabin_temp_notif
 
-CMD ["python", "main.py"]
+CMD ["python", "jobs/cabin_temp_notif/main.py"]
