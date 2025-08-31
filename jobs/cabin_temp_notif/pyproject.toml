@@ -14,4 +14,9 @@ allow-direct-references = true
 packages = ["jobs/service_update"]
 
 [tool.uv.sources]
-jobs-common = { path = "../../common" }
+jobs-common = { workspace = true }
+
+[tool.uv.workspace]
+members = [
+  "../../common"
+]
