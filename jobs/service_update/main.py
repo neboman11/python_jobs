@@ -38,44 +38,67 @@ def main():
     required_vars = ["GITHUB_PAT", "GHCR_TOKEN"]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:
-        logger.error(
+        error_message = (
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
+        logger.error(error_message)
+        # Send notification on premature exit
+        send_notification(f"Script terminating. Reason: {error_message}")
         sys.exit(1)
 
-    github_PAT = os.getenv("GITHUB_PAT")
-    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
+    try:
+        github_PAT = os.getenv("GITHUB_PAT")
+        dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
-    if not github_PAT:
-        logger.error("GITHUB_PAT environment variable is required")
+        if not github_PAT:
+            error_message = "GITHUB_PAT environment variable is required"
+            logger.error(error_message)
+            # Send notification on premature exit
+            send_notification(f"Script terminating. Reason: {error_message}")
+            sys.exit(1)
+
+        auth = Auth.Token(github_PAT)
+        gh = Github(auth=auth)
+        argo_repo = gh.get_repo("neboman11/argocd-definitions")
+        repo_contents = argo_repo.get_contents("/")
+
+        logger.info("Finding kustomize and deployment files in repo")
+        kustomize_files, deployment_files, chart_files = get_files(
+            argo_repo, repo_contents
+        )
+
+        logger.info("Checking for updates")
+        helm_updates = find_helm_updates(kustomize_files)
+        image_updates = find_image_updates(deployment_files)
+        chart_updates = find_chart_updates(chart_files)
+
+        if not (helm_updates or image_updates or chart_updates):
+            logger.info("Found no charts or images to update")
+            return
+
+        date_string = datetime.now().strftime("%Y-%m-%d")
+        new_branch_name = f"service_update/{date_string}"
+
+        handle_all_updates(
+            argo_repo,
+            new_branch_name,
+            dry_run,
+            helm_updates,
+            image_updates,
+            chart_updates,
+        )
+
+        if dry_run:
+            logger.info("Dry run complete. No changes were committed.")
+
+    # Catch any unhandled exception to send a final notification
+    except Exception as e:
+        error_message = (
+            f"An unexpected error occurred, forcing the script to terminate: {e}"
+        )
+        logger.error(error_message, exc_info=True)
+        send_notification(error_message)
         sys.exit(1)
-
-    auth = Auth.Token(github_PAT)
-    gh = Github(auth=auth)
-    argo_repo = gh.get_repo("neboman11/argocd-definitions")
-    repo_contents = argo_repo.get_contents("/")
-
-    logger.info("Finding kustomize and deployment files in repo")
-    kustomize_files, deployment_files, chart_files = get_files(argo_repo, repo_contents)
-
-    logger.info("Checking for updates")
-    helm_updates = find_helm_updates(kustomize_files)
-    image_updates = find_image_updates(deployment_files)
-    chart_updates = find_chart_updates(chart_files)
-
-    if not (helm_updates or image_updates or chart_updates):
-        logger.info("Found no charts or images to update")
-        return
-
-    date_string = datetime.now().strftime("%Y-%m-%d")
-    new_branch_name = f"service_update/{date_string}"
-
-    handle_all_updates(
-        argo_repo, new_branch_name, dry_run, helm_updates, image_updates, chart_updates
-    )
-
-    if dry_run:
-        logger.info("Dry run complete. No changes were committed.")
 
 
 def get_files(repo, contents):
@@ -360,15 +383,16 @@ def check_for_chart_update(chart_file: dict):
         if not chart_repo.endswith("/"):
             chart_repo += "/"
 
-        response = requests.get(f"{chart_repo}index.yaml")
-        if not response.ok:
-            logger.error(
-                "Error pulling latest chart index from %s for %s: %s",
-                chart_repo,
-                chart_name,
-                response.content,
-            )
+        try:
+            response = requests.get(f"{chart_repo}index.yaml")
+            response.raise_for_status()  # Raise an exception for bad status codes
+        except requests.exceptions.RequestException as e:
+            # On failure, notify and continue to the next dependency
+            error_message = f"Failed to pull chart index from {chart_repo} for {chart_name}. Error: {e}"
+            logger.error(error_message)
+            send_notification(error_message)
             continue
+
         repository_index = yaml.safe_load(io.BytesIO(response.content))
 
         remote_versions = [
@@ -453,16 +477,17 @@ def check_for_helm_chart_update(kustomize_file: dict):
     if not chart_repo.endswith("/"):
         chart_repo += "/"
 
-    # Pull the index file containing all the available charts at the repo
-    response = requests.get(f"{chart_repo}index.yaml")
-    if not response.ok:
-        logger.error(
-            "Error pulling latest chart index from %s for %s: %s",
-            chart_repo,
-            deployed_chart.get("releaseName"),
-            response.content,
-        )
+    try:
+        # Pull the index file containing all the available charts at the repo
+        response = requests.get(f"{chart_repo}index.yaml")
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        # On failure, notify and return to continue to the next file
+        error_message = f"Failed to pull chart index from {chart_repo} for {deployed_chart.get('releaseName')}. Error: {e}"
+        logger.error(error_message)
+        send_notification(error_message)
         return
+
     repository_index = yaml.safe_load(io.BytesIO(response.content))
 
     # Select the available chart versions from the repo
@@ -548,11 +573,9 @@ def get_latest_image_tag(image_name: str):
             f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
         )
         if not response.ok:
-            logger.error(
-                "Error pulling latest image tag from Docker for %s: %s",
-                image_name,
-                response.content,
-            )
+            error_message = f"Error pulling latest image tag from Docker for {image_name}: {response.content}"
+            logger.error(error_message)
+            send_notification(error_message)
             return None
         tags = response.json().get("results", [])
         tags = [tag["name"] for tag in tags]
@@ -569,11 +592,9 @@ def get_latest_image_tag(image_name: str):
             headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
         )
         if not response.ok:
-            logger.error(
-                "Error pulling latest image tag from GHCR for %s: %s",
-                image_name,
-                response.content,
-            )
+            error_message = f"Error pulling latest image tag from GHCR for {image_name}: {response.content}"
+            logger.error(error_message)
+            send_notification(error_message)
             return None
 
         packages = response.json()
@@ -591,12 +612,9 @@ def get_latest_image_tag(image_name: str):
                 headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
             )
             if not response.ok:
-                logger.error(
-                    "Error pulling image tag page %d from GHCR for %s: %s",
-                    page_num,
-                    image_name,
-                    response.content,
-                )
+                error_message = f"Error pulling image tag page {page_num} from GHCR for {image_name}: {response.content}"
+                logger.error(error_message)
+                send_notification(error_message)
                 return None
             packages = response.json()
 
@@ -607,11 +625,9 @@ def get_latest_image_tag(image_name: str):
             image_name = image_name[len("quay.io/") :]
         response = requests.get(f"https://quay.io/api/v1/repository/{image_name}/tag/")
         if not response.ok:
-            logger.error(
-                "Error pulling latest image tag from Quay for %s: %s",
-                image_name,
-                response.content,
-            )
+            error_message = f"Error pulling latest image tag from Quay for {image_name}: {response.content}"
+            logger.error(error_message)
+            send_notification(error_message)
             return None
         tags = response.json().get("tags", [])
         if not tags:
