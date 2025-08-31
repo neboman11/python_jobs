@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Any
 
 from github import Auth
@@ -15,6 +16,7 @@ import github
 from natsort import natsorted
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import NameResolutionError
 from urllib3.util.retry import Retry
 import yaml
 
@@ -33,6 +35,62 @@ class UpdateType(Enum):
     KustomizeChart = 0
     Image = 1
     HelmChart = 2
+
+
+class RetrySession(requests.Session):
+    def __init__(
+        self,
+        retries: int = 3,
+        backoff_factor: float = 0.5,
+        status_forcelist: tuple[int, ...] = (500, 502, 504),
+        allowed_methods: frozenset[str] = frozenset(["GET", "POST"]),
+    ):
+        super().__init__()
+
+        retry = Retry(
+            total=retries,
+            read=retries,
+            connect=retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=status_forcelist,
+            allowed_methods=allowed_methods,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.mount("https://", adapter)
+        self.mount("http://", adapter)
+
+        self._dns_retries = retries
+        self._backoff_factor = backoff_factor
+
+    # Use *args, **kwargs to match full signature and satisfy type checkers
+    def request(self, *args, **kwargs) -> requests.Response:
+        last_exception: Exception | None = None
+        for attempt in range(self._dns_retries + 1):
+            try:
+                return super().request(*args, **kwargs)
+            except requests.exceptions.ConnectionError as e:
+                if isinstance(e.__cause__, NameResolutionError):
+                    last_exception = e
+                    sleep_time = self._backoff_factor * (2**attempt)
+                    url = kwargs.get("url") or (
+                        args[1] if len(args) > 1 else "<unknown>"
+                    )
+                    logger.warning(
+                        "DNS resolution failed for %s, retrying in %.1fs (%d/%d)",
+                        url,
+                        sleep_time,
+                        attempt + 1,
+                        self._dns_retries,
+                    )
+                    time.sleep(sleep_time)
+                    continue
+                raise
+        # If we exit loop without returning, make sure we raise a valid exception
+        if last_exception is not None:
+            raise last_exception
+        raise requests.exceptions.ConnectionError(
+            "DNS resolution retry failed, no exception captured"
+        )
 
 
 def main():
@@ -548,27 +606,6 @@ def parse_image(image: str):
     return image_name, tag
 
 
-def requests_retry_session(
-    retries=3,
-    backoff_factor=0.5,
-    status_forcelist=(500, 502, 504),
-    session=None,
-):
-    session = session or requests.Session()
-    retry = Retry(
-        total=retries,
-        read=retries,
-        connect=retries,
-        backoff_factor=backoff_factor,
-        status_forcelist=status_forcelist,
-        allowed_methods=frozenset(["GET", "POST"]),
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
-
-
 def detect_registry_and_normalize(image_name: str):
     registry = "docker.io"
     parts = image_name.split("/")
@@ -590,7 +627,8 @@ def detect_registry_and_normalize(image_name: str):
 def fetch_docker_tags(image_name: str):
     url = f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
     try:
-        response = requests_retry_session().get(url)
+        session = RetrySession()
+        response = session.get(url)
         response.raise_for_status()
         tags = [tag["name"] for tag in response.json().get("results", [])]
         return tags
@@ -614,9 +652,8 @@ def fetch_ghcr_tags(image_name: str):
     try:
         while True:
             url = f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions?page={page_num}"
-            response = requests_retry_session().get(
-                url, headers={"Authorization": f"Bearer {token}"}
-            )
+            session = RetrySession()
+            response = session.get(url, headers={"Authorization": f"Bearer {token}"})
             response.raise_for_status()
             packages = response.json()
             if not packages:
@@ -639,7 +676,8 @@ def fetch_quay_tags(image_name: str):
         image_name = image_name[len("quay.io/") :]
     url = f"https://quay.io/api/v1/repository/{image_name}/tag/"
     try:
-        response = requests_retry_session().get(url)
+        session = RetrySession()
+        response = session.get(url)
         response.raise_for_status()
         tags = response.json().get("tags", [])
         return tags
