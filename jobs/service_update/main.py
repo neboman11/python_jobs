@@ -1,7 +1,7 @@
-import logging
 from datetime import datetime
 from enum import Enum
 import io
+import logging
 import os
 import re
 import sys
@@ -14,6 +14,8 @@ from github import Repository
 import github
 from natsort import natsorted
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import yaml
 
 import jobs_common
@@ -546,109 +548,140 @@ def parse_image(image: str):
     return image_name, tag
 
 
-def get_latest_image_tag(image_name: str):
-    # Default registry
+def requests_retry_session(
+    retries=3,
+    backoff_factor=0.5,
+    status_forcelist=(500, 502, 504),
+    session=None,
+):
+    session = session or requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=frozenset(["GET", "POST"]),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def detect_registry_and_normalize(image_name: str):
     registry = "docker.io"
-
-    # Split the image name to check for registry
     parts = image_name.split("/")
-
-    # Check if the first part is a registry
     if len(parts) > 1 and "." in parts[0]:
         registry = parts[0]
         image_name = "/".join(parts[1:])
     else:
         image_name = "/".join(parts)
 
-    if registry == "docker.io":
-        if image_name.startswith("docker.io/"):
-            image_name = image_name[len("docker.io/") :]
-        parts = image_name.split("/")
-        if len(parts) == 1:
-            image_name = f"library/{parts[0]}"
-        else:
-            image_name = "/".join(parts)
+    if (
+        registry == "docker.io"
+        and not image_name.startswith("library/")
+        and len(image_name.split("/")) == 1
+    ):
+        image_name = f"library/{image_name}"
+    return registry, image_name
 
-        response = requests.get(
-            f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
-        )
-        if not response.ok:
-            error_message = f"Error pulling latest image tag from Docker for {image_name}: {response.content}"
-            logger.error(error_message)
-            send_notification(error_message)
-            return None
-        tags = response.json().get("results", [])
-        tags = [tag["name"] for tag in tags]
-        if not tags:
-            return None
-    elif registry == "ghcr.io":
-        if image_name.startswith("ghcr.io/"):
-            image_name = image_name[len("ghcr.io/") :]
-        image_user = image_name.split("/")[0]
-        image_repo = image_name[len(image_user) + 1 :].replace("/", "%2F")
-        tags = []
-        response = requests.get(
-            f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions",
-            headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
-        )
-        if not response.ok:
-            error_message = f"Error pulling latest image tag from GHCR for {image_name}: {response.content}"
-            logger.error(error_message)
-            send_notification(error_message)
-            return None
 
-        packages = response.json()
-        page_num = 1
-        # Pull version tags for every page
-        while len(packages) > 0:
-            [
-                tags.append(tag)
-                for package in packages
-                for tag in package["metadata"]["container"]["tags"]
-            ]
-            page_num += 1
-            response = requests.get(
-                f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions?page={page_num}",
-                headers={"Authorization": f"Bearer {os.getenv('GHCR_TOKEN')}"},
+def fetch_docker_tags(image_name: str):
+    url = f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
+    try:
+        response = requests_retry_session().get(url)
+        response.raise_for_status()
+        tags = [tag["name"] for tag in response.json().get("results", [])]
+        return tags
+    except requests.RequestException as e:
+        error_message = (
+            f"Error pulling latest image tag from Docker for {image_name}: {e}"
+        )
+        logger.error(error_message)
+        send_notification(error_message)
+        return None
+
+
+def fetch_ghcr_tags(image_name: str):
+    token = os.getenv("GHCR_TOKEN")
+    if image_name.startswith("ghcr.io/"):
+        image_name = image_name[len("ghcr.io/") :]
+    image_user = image_name.split("/")[0]
+    image_repo = image_name[len(image_user) + 1 :].replace("/", "%2F")
+    tags = []
+    page_num = 1
+    try:
+        while True:
+            url = f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions?page={page_num}"
+            response = requests_retry_session().get(
+                url, headers={"Authorization": f"Bearer {token}"}
             )
-            if not response.ok:
-                error_message = f"Error pulling image tag page {page_num} from GHCR for {image_name}: {response.content}"
-                logger.error(error_message)
-                send_notification(error_message)
-                return None
+            response.raise_for_status()
             packages = response.json()
+            if not packages:
+                break
+            for package in packages:
+                tags.extend(package["metadata"]["container"]["tags"])
+            page_num += 1
+        return tags
+    except requests.RequestException as e:
+        error_message = (
+            f"Error pulling latest image tag from GHCR for {image_name}: {e}"
+        )
+        logger.error(error_message)
+        send_notification(error_message)
+        return None
 
-        if not tags:
-            return None
-    elif registry == "quay.io":
-        if image_name.startswith("quay.io/"):
-            image_name = image_name[len("quay.io/") :]
-        response = requests.get(f"https://quay.io/api/v1/repository/{image_name}/tag/")
-        if not response.ok:
-            error_message = f"Error pulling latest image tag from Quay for {image_name}: {response.content}"
-            logger.error(error_message)
-            send_notification(error_message)
-            return None
+
+def fetch_quay_tags(image_name: str):
+    if image_name.startswith("quay.io/"):
+        image_name = image_name[len("quay.io/") :]
+    url = f"https://quay.io/api/v1/repository/{image_name}/tag/"
+    try:
+        response = requests_retry_session().get(url)
+        response.raise_for_status()
         tags = response.json().get("tags", [])
-        if not tags:
-            return None
+        return tags
+    except requests.RequestException as e:
+        error_message = (
+            f"Error pulling latest image tag from Quay for {image_name}: {e}"
+        )
+        logger.error(error_message)
+        send_notification(error_message)
+        return None
+
+
+def filter_and_sort_tags(tags):
+    regex = re.compile(r"^v?\d+\.\d+\.\d+(?:\.\d+)?$")
+    filtered_tags = [tag for tag in tags if regex.match(tag)]
+    if not filtered_tags:
+        return None
+    return natsorted(filtered_tags, key=lambda x: x, reverse=True)
+
+
+def get_latest_image_tag(image_name: str):
+    registry, normalized_name = detect_registry_and_normalize(image_name)
+
+    if registry == "docker.io":
+        tags = fetch_docker_tags(normalized_name)
+    elif registry == "ghcr.io":
+        tags = fetch_ghcr_tags(normalized_name)
+    elif registry == "quay.io":
+        tags = fetch_quay_tags(normalized_name)
     else:
         raise ValueError(f"Unsupported registry: {registry}")
 
-    # Filter tags to match the regex pattern
-    regex = re.compile(r"^v?\d+\.\d+\.\d+(?:\.\d+)?$")
-    filtered_tags = [tag for tag in tags if regex.match(tag)]
-
-    if not filtered_tags:
-        logger.warning("No tags found matching the pattern for %s", image_name)
+    if not tags:
+        logger.warning(f"No tags found for {image_name}")
         return None
 
-    # Sort the tags using natsorted
-    sorted_tags = natsorted(filtered_tags, key=lambda x: x, reverse=True)
+    sorted_tags = filter_and_sort_tags(tags)
+    if not sorted_tags:
+        logger.warning("No tags matching pattern found for %s", image_name)
+        return None
 
-    # Get the latest tag
-    latest_tag = sorted_tags[0]
-    return latest_tag
+    return sorted_tags[0]
 
 
 if __name__ == "__main__":
