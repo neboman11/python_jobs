@@ -2,6 +2,11 @@ import io
 import yaml
 import logging
 import github
+
+from filters import (
+    chart_updates_with_minor_or_patch_filter,
+    image_updates_with_minor_or_patch_filter,
+)
 from notifications import send_notification
 from update_types import UpdateType
 
@@ -9,11 +14,6 @@ from update_types import UpdateType
 def handle_all_updates(
     repo, branch_name, dry_run, kustomize_charts_updates, image_updates, chart_updates
 ):
-    from .filters import (
-        chart_updates_with_minor_or_patch_filter,
-        image_updates_with_minor_or_patch_filter,
-    )
-
     if kustomize_charts_updates:
         minor_update_charts = filter_updates(
             kustomize_charts_updates, chart_updates_with_minor_or_patch_filter

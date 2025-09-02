@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "service-update"
-version = "1.1.4"
+version = "1.1.5"
 description = "Service update job for k8s deployments"
 requires-python = ">=3.12"
 dependencies = [
