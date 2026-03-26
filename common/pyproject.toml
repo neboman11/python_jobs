@@ -7,4 +7,4 @@ name = "jobs-common"
 version = "1.1.1"
 description = "Common utilities for Python jobs"
 requires-python = ">=3.12"
-dependencies = ["requests==2.32.4"]
+dependencies = ["requests==2.33.0"]
