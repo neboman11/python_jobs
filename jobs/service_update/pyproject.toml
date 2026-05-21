@@ -22,7 +22,7 @@ allow-direct-references = true
 packages = ["jobs/service_update"]
 
 [tool.uv.sources]
-jobs-common = { workspace = true }
+jobs-common = { path = "../../common" }
 
 [tool.uv.workspace]
 members = ["../../common"]
