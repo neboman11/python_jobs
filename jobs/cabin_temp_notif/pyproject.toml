@@ -16,6 +16,3 @@ packages = ["jobs/service_update"]
 
 [tool.uv.sources]
 jobs-common = { path = "../../common" }
-
-[tool.uv.workspace]
-members = ["../../common"]
