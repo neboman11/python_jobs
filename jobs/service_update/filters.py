@@ -1,3 +1,15 @@
+IGNORED_IMAGE_NAMES = {
+    "postgres",
+    "mariadb",
+    "mysql",
+}
+
+
+def is_ignored_image(image_name: str) -> bool:
+    base_name = image_name.split("/")[-1]
+    return base_name in IGNORED_IMAGE_NAMES
+
+
 def image_updates_with_minor_or_patch_filter(image_update):
     split_original_tag = image_update["current_tag"].split(".")
     split_new_tag = image_update["new_tag"].split(".")

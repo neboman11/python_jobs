@@ -5,12 +5,16 @@ import requests
 from natsort import natsorted
 from notifications import send_notification
 from retry_session import RetrySession
+from filters import is_ignored_image
 
 
 def check_for_image_update(deployment_file: dict):
     containers = deployment_file["spec"]["template"]["spec"]["containers"]
     for container in containers:
         image_name, current_tag = parse_image(container["image"])
+        if is_ignored_image(image_name):
+            logging.info("Skipping database image %s", image_name)
+            continue
         new_tag = get_latest_image_tag(image_name)
         if new_tag is None:
             return None
