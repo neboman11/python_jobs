@@ -137,7 +137,9 @@ def commit_updates_to_branch(
     target_branch_ref,
     files_needing_updates,
 ):
+    branch_name = target_branch_ref.replace("refs/heads/", "")
     for file in files_needing_updates:
+        current_sha = argo_repo.get_contents(file["path"], ref=branch_name).sha
         if "kustomize_file" in file:
             file_content_stream = io.StringIO()
             yaml.dump(file["kustomize_file"], file_content_stream)
@@ -147,7 +149,7 @@ def commit_updates_to_branch(
                 file["path"],
                 f"Bump {file['release_name']} version to {file['new_version']}",
                 file_contents,
-                file["sha"],
+                current_sha,
                 target_branch_ref,
             )
         elif "deployment_file" in file:
@@ -158,7 +160,7 @@ def commit_updates_to_branch(
                 file["path"],
                 f"Bump {file['image_name']} image tag to {file['new_tag']}",
                 file_content_stream.getvalue(),
-                file["sha"],
+                current_sha,
                 target_branch_ref,
             )
         elif "chart_file" in file:
@@ -169,7 +171,7 @@ def commit_updates_to_branch(
                 file["path"],
                 f"Bump {file['chart_name']} version to {file['new_version']}",
                 file_content_stream.getvalue(),
-                file["sha"],
+                current_sha,
                 target_branch_ref,
             )
         else:
