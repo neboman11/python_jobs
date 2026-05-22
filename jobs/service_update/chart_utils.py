@@ -1,9 +1,12 @@
 import io
+import re
 import yaml
 import logging
 import requests
 from natsort import natsorted
 from notifications import send_notification
+
+STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-stable)?$")
 
 
 def check_for_chart_update(chart_file: dict):
@@ -26,12 +29,7 @@ def check_for_chart_update(chart_file: dict):
             chart["version"]
             for chart in repository_index["entries"].get(chart_name, [])
         ]
-        remote_versions = list(
-            filter(
-                lambda x: "dev" not in x and "alpha" not in x and "beta" not in x,
-                remote_versions,
-            )
-        )
+        remote_versions = [v for v in remote_versions if STABLE_VERSION_RE.match(v)]
         remote_versions = list(natsorted(remote_versions, reverse=True))
         if remote_versions and remote_versions[0] != dependency["version"]:
             original_version = dependency["version"]
@@ -66,11 +64,14 @@ def check_for_helm_chart_update(kustomize_file: dict):
     ]
     remote_versions = list(
         filter(
-            lambda x: "dev" not in x and "alpha" not in x and "beta" not in x,
+            lambda x: "dev" not in x and "rc" not in x and "alpha" not in x and "beta" not in x,
             remote_versions,
         )
     )
     remote_versions = list(natsorted(remote_versions, reverse=True))
+    if not remote_versions:
+        logging.warning("No stable versions found for %s", deployed_chart.get("name"))
+        return
     if remote_versions[0] != deployed_chart["version"]:
         original_version = deployed_chart["version"]
         kustomize_file["helmCharts"][0]["version"] = remote_versions[0]

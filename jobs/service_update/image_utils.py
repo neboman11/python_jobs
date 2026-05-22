@@ -8,12 +8,12 @@ from retry_session import RetrySession
 from filters import is_ignored_image
 
 
-def check_for_image_update(deployment_file: dict):
+def check_for_image_update(deployment_file: dict, ignored_images: set[str]):
     containers = deployment_file["spec"]["template"]["spec"]["containers"]
     for container in containers:
         image_name, current_tag = parse_image(container["image"])
-        if is_ignored_image(image_name):
-            logging.info("Skipping database image %s", image_name)
+        if is_ignored_image(image_name, ignored_images):
+            logging.info("Skipping ignored image %s", image_name)
             continue
         new_tag = get_latest_image_tag(image_name)
         if new_tag is None:
@@ -121,9 +121,15 @@ def fetch_quay_tags(image_name: str):
         return None
 
 
+PRE_RELEASE_KEYWORDS = ("rc", "alpha", "beta")
+
+
 def filter_and_sort_tags(tags):
     regex = re.compile(r"^v?\d+\.\d+\.\d+(?:\.\d+)?$")
-    filtered_tags = [tag for tag in tags if regex.match(tag)]
+    filtered_tags = [
+        tag for tag in tags
+        if regex.match(tag) and not any(kw in tag.lower() for kw in PRE_RELEASE_KEYWORDS)
+    ]
     if not filtered_tags:
         return None
     return natsorted(filtered_tags, key=lambda x: x, reverse=True)
