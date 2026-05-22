@@ -9,10 +9,13 @@ from notifications import send_notification
 STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-stable)?$")
 
 
-def check_for_chart_update(chart_file: dict):
+def check_for_chart_update(chart_file: dict, ignored_images: set[str]):
     dependencies = chart_file.get("dependencies", [])
     for dependency in dependencies:
         chart_name = dependency["name"]
+        if chart_name in ignored_images:
+            logging.info("Skipping ignored chart %s", chart_name)
+            continue
         chart_repo = dependency["repository"]
         if not chart_repo.endswith("/"):
             chart_repo += "/"
@@ -42,9 +45,12 @@ def check_for_chart_update(chart_file: dict):
             }
 
 
-def check_for_helm_chart_update(kustomize_file: dict):
+def check_for_helm_chart_update(kustomize_file: dict, ignored_images: set[str]):
     deployed_chart = kustomize_file["helmCharts"][0]
     if deployed_chart.get("namespace") == "databases":
+        return
+    if deployed_chart.get("name") in ignored_images:
+        logging.info("Skipping ignored chart %s", deployed_chart.get("name"))
         return
     chart_repo = deployed_chart["repo"]
     if not chart_repo.endswith("/"):
