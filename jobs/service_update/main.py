@@ -58,9 +58,9 @@ def main():
         ignored_images = get_ignored_images()
 
         logger.info("Checking for updates")
-        helm_updates = find_helm_updates(kustomize_files)
+        helm_updates = find_helm_updates(kustomize_files, ignored_images)
         image_updates = find_image_updates(deployment_files, ignored_images)
-        chart_updates = find_chart_updates(chart_files)
+        chart_updates = find_chart_updates(chart_files, ignored_images)
 
         if not (helm_updates or image_updates or chart_updates):
             logger.info("Found no charts or images to update")

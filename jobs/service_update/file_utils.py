@@ -42,13 +42,13 @@ def find_kustomize_and_deployment_files(
             )
 
 
-def find_helm_updates(files):
-    updates = kustomize_files_find_helm_charts_with_updates(files)
+def find_helm_updates(files, ignored_images: set[str]):
+    updates = kustomize_files_find_helm_charts_with_updates(files, ignored_images)
     return updates
 
 
-def find_chart_updates(files):
-    updates = chart_files_find_chart_updates(files)
+def find_chart_updates(files, ignored_images: set[str]):
+    updates = chart_files_find_chart_updates(files, ignored_images)
     return updates
 
 
@@ -57,14 +57,14 @@ def find_image_updates(files, ignored_images: set[str]):
     return updates
 
 
-def kustomize_files_find_helm_charts_with_updates(kustomize_files):
+def kustomize_files_find_helm_charts_with_updates(kustomize_files, ignored_images: set[str]):
     files_needing_updates = []
     for kustomize_file in kustomize_files:
         file_stream = io.BytesIO(kustomize_file.decoded_content)
         try:
             parsed_file = yaml.safe_load(file_stream)
             if "helmCharts" in parsed_file:
-                updated_file = check_for_helm_chart_update(parsed_file)
+                updated_file = check_for_helm_chart_update(parsed_file, ignored_images)
                 if updated_file is not None:
                     updated_file["path"] = kustomize_file.path
                     updated_file["sha"] = kustomize_file.sha
@@ -74,13 +74,13 @@ def kustomize_files_find_helm_charts_with_updates(kustomize_files):
     return files_needing_updates
 
 
-def chart_files_find_chart_updates(chart_files):
+def chart_files_find_chart_updates(chart_files, ignored_images: set[str]):
     files_needing_updates = []
     for chart_file in chart_files:
         file_stream = io.BytesIO(chart_file.decoded_content)
         try:
             parsed_file = yaml.safe_load(file_stream)
-            updated_file = check_for_chart_update(parsed_file)
+            updated_file = check_for_chart_update(parsed_file, ignored_images)
             if updated_file is not None:
                 updated_file["path"] = chart_file.path
                 updated_file["sha"] = chart_file.sha
