@@ -13,6 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from notifications import send_notification
+from config_utils import get_ignored_images
 from file_utils import (
     get_files,
     find_helm_updates,
@@ -53,9 +54,12 @@ def main():
             argo_repo, repo_contents
         )
 
+        logger.info("Fetching ignored images from config service")
+        ignored_images = get_ignored_images()
+
         logger.info("Checking for updates")
         helm_updates = find_helm_updates(kustomize_files)
-        image_updates = find_image_updates(deployment_files)
+        image_updates = find_image_updates(deployment_files, ignored_images)
         chart_updates = find_chart_updates(chart_files)
 
         if not (helm_updates or image_updates or chart_updates):

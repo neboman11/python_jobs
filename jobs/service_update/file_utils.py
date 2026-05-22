@@ -52,8 +52,8 @@ def find_chart_updates(files):
     return updates
 
 
-def find_image_updates(files):
-    updates = deployment_files_find_image_updates(files)
+def find_image_updates(files, ignored_images: set[str]):
+    updates = deployment_files_find_image_updates(files, ignored_images)
     return updates
 
 
@@ -90,13 +90,13 @@ def chart_files_find_chart_updates(chart_files):
     return files_needing_updates
 
 
-def deployment_files_find_image_updates(deployment_files):
+def deployment_files_find_image_updates(deployment_files, ignored_images: set[str]):
     files_needing_updates = []
     for deployment_file in deployment_files:
         file_stream = io.BytesIO(deployment_file.decoded_content)
         try:
             parsed_file = yaml.safe_load(file_stream)
-            updated_file = check_for_image_update(parsed_file)
+            updated_file = check_for_image_update(parsed_file, ignored_images)
             if updated_file is not None:
                 updated_file["path"] = deployment_file.path
                 updated_file["sha"] = deployment_file.sha

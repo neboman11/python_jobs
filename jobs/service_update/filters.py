@@ -1,13 +1,6 @@
-IGNORED_IMAGE_NAMES = {
-    "postgres",
-    "mariadb",
-    "mysql",
-}
-
-
-def is_ignored_image(image_name: str) -> bool:
+def is_ignored_image(image_name: str, ignored_images: set[str]) -> bool:
     base_name = image_name.split("/")[-1]
-    return base_name in IGNORED_IMAGE_NAMES
+    return base_name in ignored_images
 
 
 def image_updates_with_minor_or_patch_filter(image_update):
