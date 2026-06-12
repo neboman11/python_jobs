@@ -21,7 +21,7 @@ def handle_all_updates(
         if minor_update_charts:
             handle_updates(
                 repo,
-                branch_name,
+                f"{branch_name}-kustomize-minor",
                 dry_run,
                 minor_update_charts,
                 UpdateType.KustomizeChart,
@@ -33,7 +33,7 @@ def handle_all_updates(
         if major_update_charts:
             handle_updates(
                 repo,
-                branch_name,
+                f"{branch_name}-kustomize-major",
                 dry_run,
                 major_update_charts,
                 UpdateType.KustomizeChart,
@@ -45,7 +45,7 @@ def handle_all_updates(
         )
         if minor_update_images:
             handle_updates(
-                repo, branch_name, dry_run, minor_update_images, UpdateType.Image
+                repo, f"{branch_name}-image-minor", dry_run, minor_update_images, UpdateType.Image
             )
         major_update_images = filter_updates(
             image_updates, lambda x: not image_updates_with_minor_or_patch_filter(x)
@@ -53,7 +53,7 @@ def handle_all_updates(
         if major_update_images:
             handle_updates(
                 repo,
-                branch_name,
+                f"{branch_name}-image-major",
                 dry_run,
                 major_update_images,
                 UpdateType.Image,
@@ -65,7 +65,7 @@ def handle_all_updates(
         )
         if minor_update_charts:
             handle_updates(
-                repo, branch_name, dry_run, minor_update_charts, UpdateType.HelmChart
+                repo, f"{branch_name}-helm-minor", dry_run, minor_update_charts, UpdateType.HelmChart
             )
         major_update_charts = filter_updates(
             chart_updates, lambda x: not chart_updates_with_minor_or_patch_filter(x)
@@ -73,7 +73,7 @@ def handle_all_updates(
         if major_update_charts:
             handle_updates(
                 repo,
-                branch_name,
+                f"{branch_name}-helm-major",
                 dry_run,
                 major_update_charts,
                 UpdateType.HelmChart,
@@ -102,6 +102,7 @@ def handle_updates(
         if not is_major:
             logging.info("Merging PR automatically for minor/patch update")
             pr.merge()
+            repo.get_git_ref(f"heads/{branch_name}").delete()
     notification_type = "major version bumps on" if is_major else "versions"
     match update_type:
         case UpdateType.KustomizeChart:
@@ -179,6 +180,10 @@ def commit_updates_to_branch(
 
 
 def create_pull_request_for_updates(argo_repo, new_branch_name: str):
+    open_prs = argo_repo.get_pulls(state="open", head=f"{argo_repo.owner.login}:{new_branch_name}")
+    for pr in open_prs:
+        logging.info("Found existing open PR #%d for branch %s", pr.number, new_branch_name)
+        return pr
     pull_request = argo_repo.create_pull(
         argo_repo.default_branch,
         new_branch_name,
