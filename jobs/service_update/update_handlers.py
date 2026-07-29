@@ -9,6 +9,7 @@ from filters import (
 )
 from notifications import send_notification
 from update_types import UpdateType
+from values_utils import group_image_updates
 
 
 def handle_all_updates(
@@ -45,7 +46,7 @@ def handle_all_updates(
         )
         if minor_update_images:
             handle_updates(
-                repo, f"{branch_name}-image-minor", dry_run, minor_update_images, UpdateType.Image
+                repo, f"{branch_name}-image-minor", dry_run, group_image_updates(minor_update_images), UpdateType.Image
             )
         major_update_images = filter_updates(
             image_updates, lambda x: not image_updates_with_minor_or_patch_filter(x)
@@ -55,7 +56,7 @@ def handle_all_updates(
                 repo,
                 f"{branch_name}-image-major",
                 dry_run,
-                major_update_images,
+                group_image_updates(major_update_images),
                 UpdateType.Image,
                 is_major=True,
             )
@@ -111,7 +112,7 @@ def handle_updates(
             )
         case UpdateType.Image:
             send_notification(
-                f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([image['image_name'] for image in update_objects])}"
+                f"{'Created PR for' if is_major else 'Updated'} {notification_type} {', '.join([image['image_name'] for values_file in update_objects for image in values_file['image_updates']])}"
             )
         case UpdateType.HelmChart:
             send_notification(
@@ -153,14 +154,11 @@ def commit_updates_to_branch(
                 current_sha,
                 target_branch_ref,
             )
-        elif "deployment_file" in file:
-            file_content_stream = io.StringIO()
-            yaml.dump(file["deployment_file"], file_content_stream)
-            file_content_stream.seek(0)
+        elif "content" in file:
             argo_repo.update_file(
                 file["path"],
-                f"Bump {file['image_name']} image tag to {file['new_tag']}",
-                file_content_stream.getvalue(),
+                f"Bump image versions in {file['path']}",
+                file["content"],
                 current_sha,
                 target_branch_ref,
             )

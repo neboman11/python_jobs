@@ -1,106 +1,94 @@
+from __future__ import annotations
+
+import base64
 import io
+from dataclasses import dataclass
+
 import yaml
 
-from chart_utils import check_for_helm_chart_update, check_for_chart_update
-from image_utils import check_for_image_update
+from chart_utils import check_for_chart_update, check_for_helm_chart_update
+from values_utils import find_image_updates
 
 
-def get_files(repo, contents):
+@dataclass(frozen=True)
+class RepositoryFile:
+    path: str
+    sha: str
+    decoded_content: bytes
+
+
+def get_files(argo_repo):
+    """Fetch only updater inputs with one recursive tree request."""
     kustomize_files = []
-    deployment_files = []
+    values_files = []
     chart_files = []
-    find_kustomize_and_deployment_files(
-        repo, contents, kustomize_files, deployment_files, chart_files
-    )
-    return kustomize_files, deployment_files, chart_files
 
+    tree = argo_repo.get_git_tree(argo_repo.default_branch, recursive=True)
+    for entry in tree.tree:
+        if entry.type != "blob":
+            continue
 
-def find_kustomize_and_deployment_files(
-    argo_repo,
-    repo_files,
-    kustomize_file_list,
-    deployment_file_list,
-    chart_file_list,
-):
-    for file in repo_files:
-        if file.type == "file" and file.name == "kustomization.yaml":
-            kustomize_file_list.append(file)
-        if file.type == "file" and file.name.endswith("deployment.yaml"):
-            deployment_file_list.append(file)
-        if file.type == "file" and file.name == "Chart.yaml":
-            chart_file_list.append(file)
-        if file.type == "dir" and file.name != "overlays":
-            folder_contents = argo_repo.get_contents(f"/{file.path}")
-            if not isinstance(folder_contents, list):
-                folder_contents = [folder_contents]
-            find_kustomize_and_deployment_files(
-                argo_repo,
-                folder_contents,
-                kustomize_file_list,
-                deployment_file_list,
-                chart_file_list,
+        target = None
+        if entry.path.endswith("kustomization.yaml"):
+            target = kustomize_files
+        elif entry.path.endswith("values.yaml"):
+            target = values_files
+        elif entry.path.endswith("Chart.yaml"):
+            target = chart_files
+
+        if target is None:
+            continue
+
+        blob = argo_repo.get_git_blob(entry.sha)
+        target.append(
+            RepositoryFile(
+                path=entry.path,
+                sha=entry.sha,
+                decoded_content=base64.b64decode(blob.content),
             )
+        )
+
+    return kustomize_files, values_files, chart_files
 
 
-def find_helm_updates(files, ignored_images: set[str]):
-    updates = kustomize_files_find_helm_charts_with_updates(files, ignored_images)
-    return updates
-
-
-def find_chart_updates(files, ignored_images: set[str]):
-    updates = chart_files_find_chart_updates(files, ignored_images)
-    return updates
-
-
-def find_image_updates(files, ignored_images: set[str]):
-    updates = deployment_files_find_image_updates(files, ignored_images)
-    return updates
-
-
-def kustomize_files_find_helm_charts_with_updates(kustomize_files, ignored_images: set[str]):
+def find_helm_updates(kustomize_files, ignored_images: set[str]):
     files_needing_updates = []
+
     for kustomize_file in kustomize_files:
-        file_stream = io.BytesIO(kustomize_file.decoded_content)
         try:
-            parsed_file = yaml.safe_load(file_stream)
-            if "helmCharts" in parsed_file:
-                updated_file = check_for_helm_chart_update(parsed_file, ignored_images)
-                if updated_file is not None:
-                    updated_file["path"] = kustomize_file.path
-                    updated_file["sha"] = kustomize_file.sha
-                    files_needing_updates.append(updated_file)
+            parsed_file = yaml.safe_load(io.BytesIO(kustomize_file.decoded_content))
         except yaml.YAMLError:
-            pass
+            continue
+
+        if not parsed_file or "helmCharts" not in parsed_file:
+            continue
+
+        updated_file = check_for_helm_chart_update(parsed_file, ignored_images)
+        if updated_file is None:
+            continue
+
+        updated_file["path"] = kustomize_file.path
+        updated_file["sha"] = kustomize_file.sha
+        files_needing_updates.append(updated_file)
+
     return files_needing_updates
 
 
-def chart_files_find_chart_updates(chart_files, ignored_images: set[str]):
+def find_chart_updates(chart_files, ignored_images: set[str]):
     files_needing_updates = []
+
     for chart_file in chart_files:
-        file_stream = io.BytesIO(chart_file.decoded_content)
         try:
-            parsed_file = yaml.safe_load(file_stream)
-            updated_file = check_for_chart_update(parsed_file, ignored_images)
-            if updated_file is not None:
-                updated_file["path"] = chart_file.path
-                updated_file["sha"] = chart_file.sha
-                files_needing_updates.append(updated_file)
+            parsed_file = yaml.safe_load(io.BytesIO(chart_file.decoded_content))
         except yaml.YAMLError:
-            pass
-    return files_needing_updates
+            continue
 
+        updated_file = check_for_chart_update(parsed_file, ignored_images)
+        if updated_file is None:
+            continue
 
-def deployment_files_find_image_updates(deployment_files, ignored_images: set[str]):
-    files_needing_updates = []
-    for deployment_file in deployment_files:
-        file_stream = io.BytesIO(deployment_file.decoded_content)
-        try:
-            parsed_file = yaml.safe_load(file_stream)
-            updated_file = check_for_image_update(parsed_file, ignored_images)
-            if updated_file is not None:
-                updated_file["path"] = deployment_file.path
-                updated_file["sha"] = deployment_file.sha
-                files_needing_updates.append(updated_file)
-        except yaml.YAMLError:
-            pass
+        updated_file["path"] = chart_file.path
+        updated_file["sha"] = chart_file.sha
+        files_needing_updates.append(updated_file)
+
     return files_needing_updates

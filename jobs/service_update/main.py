@@ -47,19 +47,16 @@ def main():
         auth = Auth.Token(github_PAT)
         gh = Github(auth=auth)
         argo_repo = gh.get_repo("neboman11/argocd-definitions")
-        repo_contents = argo_repo.get_contents("/")
 
         logger.info("Finding kustomize and deployment files in repo")
-        kustomize_files, deployment_files, chart_files = get_files(
-            argo_repo, repo_contents
-        )
+        kustomize_files, values_files, chart_files = get_files(argo_repo)
 
         logger.info("Fetching ignored images from config service")
         ignored_images = get_ignored_images()
 
         logger.info("Checking for updates")
         helm_updates = find_helm_updates(kustomize_files, ignored_images)
-        image_updates = find_image_updates(deployment_files, ignored_images)
+        image_updates = find_image_updates(values_files, ignored_images)
         chart_updates = find_chart_updates(chart_files, ignored_images)
 
         if not (helm_updates or image_updates or chart_updates):
