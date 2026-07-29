@@ -48,7 +48,7 @@ def main():
         gh = Github(auth=auth)
         argo_repo = gh.get_repo("neboman11/argocd-definitions")
 
-        logger.info("Finding kustomize and deployment files in repo")
+        logger.info("Finding values files and Helm chart definitions in repo")
         kustomize_files, values_files, chart_files = get_files(argo_repo)
 
         logger.info("Fetching ignored images from config service")

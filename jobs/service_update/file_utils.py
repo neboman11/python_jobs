@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import io
-from dataclasses import dataclass
 
 import yaml
 
@@ -10,46 +8,34 @@ from chart_utils import check_for_chart_update, check_for_helm_chart_update
 from values_utils import find_image_updates
 
 
-@dataclass(frozen=True)
-class RepositoryFile:
-    path: str
-    sha: str
-    decoded_content: bytes
-
-
 def get_files(argo_repo):
-    """Fetch only updater inputs with one recursive tree request."""
+    """Collect updater inputs through the Contents API supported by this token."""
     kustomize_files = []
     values_files = []
     chart_files = []
 
-    tree = argo_repo.get_git_tree(argo_repo.default_branch, recursive=True)
-    for entry in tree.tree:
-        if entry.type != "blob":
-            continue
+    def collect(contents):
+        for file in contents:
+            if file.type == "dir":
+                collect(argo_repo.get_contents(file.path))
+                continue
 
-        target = None
-        if entry.path.endswith("kustomization.yaml"):
-            target = kustomize_files
-        elif entry.path.endswith("values.yaml"):
-            target = values_files
-        elif entry.path.endswith("Chart.yaml"):
-            target = chart_files
+            if file.type != "file":
+                continue
 
-        if target is None:
-            continue
+            target = None
+            if file.name == "kustomization.yaml":
+                target = kustomize_files
+            elif file.name == "values.yaml":
+                target = values_files
+            elif file.name == "Chart.yaml":
+                target = chart_files
 
-        blob = argo_repo.get_git_blob(entry.sha)
-        target.append(
-            RepositoryFile(
-                path=entry.path,
-                sha=entry.sha,
-                decoded_content=base64.b64decode(blob.content),
-            )
-        )
+            if target is not None:
+                target.append(argo_repo.get_contents(file.path))
 
+    collect(argo_repo.get_contents("/"))
     return kustomize_files, values_files, chart_files
-
 
 def find_helm_updates(kustomize_files, ignored_images: set[str]):
     files_needing_updates = []
