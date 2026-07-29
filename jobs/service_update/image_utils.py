@@ -73,34 +73,31 @@ def fetch_docker_tags(image_name: str):
 
 
 def fetch_ghcr_tags(image_name: str):
-    token = os.getenv("GHCR_TOKEN")
     if image_name.startswith("ghcr.io/"):
         image_name = image_name[len("ghcr.io/") :]
+
+    token = os.getenv("GHCR_TOKEN")
     image_user = image_name.split("/")[0]
     image_repo = image_name[len(image_user) + 1 :].replace("/", "%2F")
-    tags = []
-    page_num = 1
+    url = (
+        f"https://api.github.com/users/{image_user}/packages/container/"
+        f"{image_repo}/versions?per_page=100"
+    )
+
     try:
-        while True:
-            url = f"https://api.github.com/users/{image_user}/packages/container/{image_repo}/versions?page={page_num}"
-            session = RetrySession()
-            response = session.get(url, headers={"Authorization": f"Bearer {token}"})
-            response.raise_for_status()
-            packages = response.json()
-            if not packages:
-                break
-            for package in packages:
-                tags.extend(package["metadata"]["container"]["tags"])
-            page_num += 1
+        session = RetrySession()
+        response = session.get(url, headers={"Authorization": f"Bearer {token}"})
+        response.raise_for_status()
+
+        tags = []
+        for package in response.json():
+            tags.extend(package["metadata"]["container"]["tags"])
         return tags
-    except requests.RequestException as e:
-        error_message = (
-            f"Error pulling latest image tag from GHCR for {image_name}: {e}"
-        )
+    except requests.RequestException as error:
+        error_message = f"Error pulling latest image tag GHCR {image_name}: {error}"
         logging.error(error_message)
         send_notification(error_message)
         return None
-
 
 def fetch_quay_tags(image_name: str):
     if image_name.startswith("quay.io/"):
