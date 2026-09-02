@@ -10,6 +10,8 @@ from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 from filters import is_ignored_image
 from image_utils import get_latest_image_tag, parse_image
 
+IMMICH_SERVER_IMAGE = "ghcr.io/immich-app/immich-server"
+
 
 @dataclass(frozen=True)
 class ValuesImageUpdate:
@@ -39,6 +41,27 @@ def _image_nodes(node):
             for key, value in node.value
             if isinstance(key, ScalarNode)
         }
+        immich = values.get("immich")
+        if isinstance(immich, MappingNode):
+            immich_values = {
+                key.value: value
+                for key, value in immich.value
+                if isinstance(key, ScalarNode)
+            }
+            image = immich_values.get("image")
+            if isinstance(image, MappingNode):
+                image_values = {
+                    key.value: value
+                    for key, value in image.value
+                    if isinstance(key, ScalarNode)
+                }
+                tag = image_values.get("tag")
+                if (
+                    "repository" not in image_values
+                    and isinstance(tag, ScalarNode)
+                    and tag.value
+                ):
+                    yield IMMICH_SERVER_IMAGE, tag.value, tag, _render_scalar
         repository = values.get("repository")
         tag = values.get("tag")
         if (
