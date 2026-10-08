@@ -102,12 +102,15 @@ def fetch_ghcr_tags(image_name: str):
 def fetch_quay_tags(image_name: str):
     if image_name.startswith("quay.io/"):
         image_name = image_name[len("quay.io/") :]
-    url = f"https://quay.io/api/v1/repository/{image_name}/tag/"
+    url = (
+        f"https://quay.io/api/v1/repository/{image_name}/tag/"
+        "?onlyActiveTags=true&limit=100"
+    )
     try:
         session = RetrySession()
         response = session.get(url)
         response.raise_for_status()
-        tags = response.json().get("tags", [])
+        tags = [tag["name"] for tag in response.json().get("tags", [])]
         return tags
     except requests.RequestException as e:
         error_message = (
