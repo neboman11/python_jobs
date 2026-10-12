@@ -6,7 +6,8 @@ import requests
 from natsort import natsorted
 from notifications import send_notification
 
-STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-stable)?$")
+# Match semantic versions with optional suffixes, but exclude pre-release keywords
+STABLE_VERSION_RE = re.compile(r"^[\d\-\.]+\d+\.\d+\.\d+(?:\.\d+)?[\d\-\.]*$")
 
 
 def check_for_chart_update(chart_file: dict, ignored_images: set[str]):
@@ -32,17 +33,24 @@ def check_for_chart_update(chart_file: dict, ignored_images: set[str]):
             chart["version"]
             for chart in repository_index["entries"].get(chart_name, [])
         ]
-        remote_versions = [v for v in remote_versions if STABLE_VERSION_RE.match(v)]
+        # Filter out pre-release versions
+        remote_versions = [
+            v for v in remote_versions
+            if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta"))
+        ]
         remote_versions = list(natsorted(remote_versions, reverse=True))
         if remote_versions and remote_versions[0] != dependency["version"]:
             original_version = dependency["version"]
             dependency["version"] = remote_versions[0]
+            logging.info("Found new version for chart %s: %s -> %s", chart_name, original_version, remote_versions[0])
             return {
                 "chart_file": chart_file,
                 "original_version": original_version,
                 "new_version": remote_versions[0],
                 "chart_name": chart_name,
             }
+        if remote_versions:
+            logging.debug("Chart %s already at latest version %s", chart_name, dependency["version"])
 
 
 def check_for_helm_chart_update(kustomize_file: dict, ignored_images: set[str]):
@@ -68,12 +76,11 @@ def check_for_helm_chart_update(kustomize_file: dict, ignored_images: set[str]):
         chart["version"]
         for chart in repository_index["entries"][deployed_chart["name"]]
     ]
-    remote_versions = list(
-        filter(
-            lambda x: "dev" not in x and "rc" not in x and "alpha" not in x and "beta" not in x,
-            remote_versions,
-        )
-    )
+    # Filter out pre-release versions
+    remote_versions = [
+        v for v in remote_versions
+        if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta"))
+    ]
     remote_versions = list(natsorted(remote_versions, reverse=True))
     if not remote_versions:
         logging.warning("No stable versions found for %s", deployed_chart.get("name"))
@@ -81,6 +88,7 @@ def check_for_helm_chart_update(kustomize_file: dict, ignored_images: set[str]):
     if remote_versions[0] != deployed_chart["version"]:
         original_version = deployed_chart["version"]
         kustomize_file["helmCharts"][0]["version"] = remote_versions[0]
+        logging.info("Found new version for chart %s: %s -> %s", deployed_chart.get("name"), original_version, remote_versions[0])
         return {
             "kustomize_file": kustomize_file,
             "original_version": original_version,

@@ -127,11 +127,22 @@ PRE_RELEASE_KEYWORDS = ("rc", "alpha", "beta")
 
 
 def filter_and_sort_tags(tags):
-    regex = re.compile(r"^v?\d+\.\d+\.\d+(?:\.\d+)?$")
-    filtered_tags = [
-        tag for tag in tags
-        if regex.match(tag) and not any(kw in tag.lower() for kw in PRE_RELEASE_KEYWORDS)
-    ]
+    # Match semantic version anywhere in tag (e.g., v1.2.3, release-v1.2.3, 1.2.3-build)
+    # Also allow optional build metadata with + or -
+    regex = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
+    filtered_tags = []
+    for tag in tags:
+        # Check if tag contains a semver pattern
+        if not regex.search(tag):
+            continue
+        # Filter out pre-release versions
+        if any(kw in tag.lower() for kw in PRE_RELEASE_KEYWORDS):
+            continue
+        # Also exclude "latest", "main", "develop" and other unstable tags
+        if any(unstable in tag.lower() for unstable in ("latest", "main", "develop", "master", "nightly", "snapshot", "dev")):
+            continue
+        filtered_tags.append(tag)
+
     if not filtered_tags:
         return None
     return natsorted(filtered_tags, key=lambda x: x, reverse=True)
