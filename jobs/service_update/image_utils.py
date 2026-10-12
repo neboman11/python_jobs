@@ -148,16 +148,39 @@ def filter_and_sort_tags(tags):
     return natsorted(filtered_tags, key=lambda x: x, reverse=True)
 
 
+def fetch_immich_tags_from_github():
+    """Fetch immich tags from GitHub releases API instead of ghcr.io"""
+    token = os.getenv("GITHUB_PAT")
+    url = "https://api.github.com/repos/immich-app/immich/releases"
+    try:
+        session = RetrySession()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        response = session.get(url, headers=headers)
+        response.raise_for_status()
+        releases = response.json()
+        tags = [r["tag_name"] for r in releases if not r.get("prerelease", False)]
+        return tags
+    except requests.RequestException as e:
+        error_message = f"Error fetching immich tags from GitHub: {e}"
+        logging.error(error_message)
+        send_notification(error_message)
+        return None
+
+
 def get_latest_image_tag(image_name: str):
-    registry, normalized_name = detect_registry_and_normalize(image_name)
-    if registry == "docker.io":
-        tags = fetch_docker_tags(normalized_name)
-    elif registry == "ghcr.io":
-        tags = fetch_ghcr_tags(normalized_name)
-    elif registry == "quay.io":
-        tags = fetch_quay_tags(normalized_name)
+    # Special case: immich uses GitHub releases, not ghcr.io tags
+    if "immich-app/immich-server" in image_name:
+        tags = fetch_immich_tags_from_github()
     else:
-        raise ValueError(f"Unsupported registry: {registry}")
+        registry, normalized_name = detect_registry_and_normalize(image_name)
+        if registry == "docker.io":
+            tags = fetch_docker_tags(normalized_name)
+        elif registry == "ghcr.io":
+            tags = fetch_ghcr_tags(normalized_name)
+        elif registry == "quay.io":
+            tags = fetch_quay_tags(normalized_name)
+        else:
+            raise ValueError(f"Unsupported registry: {registry}")
     if not tags:
         logging.warning(f"No tags found for {image_name}")
         return None
