@@ -36,7 +36,7 @@ def check_for_chart_update(chart_file: dict, ignored_images: set[str]):
         # Filter out pre-release versions
         remote_versions = [
             v for v in remote_versions
-            if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta"))
+            if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta", "prerelease", "snapshot", "nightly"))
         ]
         remote_versions = list(natsorted(remote_versions, reverse=True))
         if remote_versions and remote_versions[0] != dependency["version"]:
@@ -79,7 +79,7 @@ def check_for_helm_chart_update(kustomize_file: dict, ignored_images: set[str]):
     # Filter out pre-release versions
     remote_versions = [
         v for v in remote_versions
-        if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta"))
+        if not any(kw in v.lower() for kw in ("dev", "rc", "alpha", "beta", "prerelease", "snapshot", "nightly"))
     ]
     remote_versions = list(natsorted(remote_versions, reverse=True))
     if not remote_versions:
