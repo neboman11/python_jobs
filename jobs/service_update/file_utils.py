@@ -5,7 +5,7 @@ import io
 import yaml
 
 from chart_utils import check_for_chart_update, check_for_helm_chart_update
-from values_utils import find_image_updates
+from values_utils import find_image_updates as find_image_updates_from_values
 
 
 def get_files(argo_repo):
@@ -78,3 +78,7 @@ def find_chart_updates(chart_files, ignored_images: set[str]):
         files_needing_updates.append(updated_file)
 
     return files_needing_updates
+
+
+def find_image_updates(values_files, ignored_images: set[str]):
+    return find_image_updates_from_values(values_files, ignored_images)
