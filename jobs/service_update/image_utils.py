@@ -120,6 +120,24 @@ def fetch_quay_tags(image_name: str):
         send_notification(error_message)
         return None
 
+def fetch_lscr_tags(image_name: str):
+    if image_name.startswith("lscr.io/"):
+        image_name = image_name[len("lscr.io/") :]
+    url = f"https://lscr.io/api/v1/repository/{image_name}/tags/?ordering=-name"
+    try:
+        session = RetrySession()
+        response = session.get(url)
+        response.raise_for_status()
+        tags = [tag["name"] for tag in response.json().get("results", [])]
+        return tags
+    except requests.RequestException as e:
+        error_message = (
+            f"Error pulling latest image tag from linuxserver for {image_name}: {e}"
+        )
+        logging.error(error_message)
+        send_notification(error_message)
+        return None
+
 
 PRE_RELEASE_KEYWORDS = ("rc", "alpha", "beta")
 
@@ -143,6 +161,8 @@ def get_latest_image_tag(image_name: str):
         tags = fetch_ghcr_tags(normalized_name)
     elif registry == "quay.io":
         tags = fetch_quay_tags(normalized_name)
+    elif registry == "lscr.io":
+        tags = fetch_lscr_tags(normalized_name)
     else:
         raise ValueError(f"Unsupported registry: {registry}")
     if not tags:
