@@ -48,6 +48,7 @@ def _image_nodes(node):
                 for key, value in immich.value
                 if isinstance(key, ScalarNode)
             }
+            # Check immich.image.tag structure (old style)
             image = immich_values.get("image")
             if isinstance(image, MappingNode):
                 image_values = {
@@ -62,6 +63,45 @@ def _image_nodes(node):
                     and tag.value
                 ):
                     yield IMMICH_SERVER_IMAGE, tag.value, tag, _render_scalar
+            # Check immich.controllers.main.containers.main.image.tag structure (new style)
+            controllers = immich_values.get("controllers")
+            if isinstance(controllers, MappingNode):
+                controllers_values = {
+                    key.value: value
+                    for key, value in controllers.value
+                    if isinstance(key, ScalarNode)
+                }
+                main = controllers_values.get("main")
+                if isinstance(main, MappingNode):
+                    main_values = {
+                        key.value: value
+                        for key, value in main.value
+                        if isinstance(key, ScalarNode)
+                    }
+                    containers = main_values.get("containers")
+                    if isinstance(containers, MappingNode):
+                        containers_values = {
+                            key.value: value
+                            for key, value in containers.value
+                            if isinstance(key, ScalarNode)
+                        }
+                        main_container = containers_values.get("main")
+                        if isinstance(main_container, MappingNode):
+                            container_values = {
+                                key.value: value
+                                for key, value in main_container.value
+                                if isinstance(key, ScalarNode)
+                            }
+                            container_image = container_values.get("image")
+                            if isinstance(container_image, MappingNode):
+                                container_image_values = {
+                                    key.value: value
+                                    for key, value in container_image.value
+                                    if isinstance(key, ScalarNode)
+                                }
+                                tag = container_image_values.get("tag")
+                                if isinstance(tag, ScalarNode) and tag.value:
+                                    yield IMMICH_SERVER_IMAGE, tag.value, tag, _render_scalar
         repository = values.get("repository")
         tag = values.get("tag")
         if (
