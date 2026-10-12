@@ -134,13 +134,17 @@ def filter_and_sort_tags(tags):
     for tag in tags:
         # Check if tag contains a semver pattern
         if not regex.search(tag):
+            logging.debug(f"Tag {tag} rejected: no semver pattern")
             continue
         # Filter out pre-release versions
         if any(kw in tag.lower() for kw in PRE_RELEASE_KEYWORDS):
+            logging.debug(f"Tag {tag} rejected: prerelease keyword")
             continue
         # Also exclude "latest", "main", "develop" and other unstable tags
         if any(unstable in tag.lower() for unstable in ("latest", "main", "develop", "master", "nightly", "snapshot", "dev")):
+            logging.debug(f"Tag {tag} rejected: unstable keyword")
             continue
+        logging.debug(f"Tag {tag} accepted")
         filtered_tags.append(tag)
 
     if not filtered_tags:
@@ -154,11 +158,13 @@ def fetch_immich_tags_from_github():
     url = "https://api.github.com/repos/immich-app/immich/releases"
     try:
         session = RetrySession()
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        headers = {"Authorization": f"token {token}"} if token else {}
         response = session.get(url, headers=headers)
         response.raise_for_status()
         releases = response.json()
+        logging.debug(f"GitHub API returned {len(releases)} releases")
         tags = [r["tag_name"] for r in releases if not r.get("prerelease", False)]
+        logging.debug(f"After prerelease filter: {tags}")
         return tags
     except requests.RequestException as e:
         error_message = f"Error fetching immich tags from GitHub: {e}"
