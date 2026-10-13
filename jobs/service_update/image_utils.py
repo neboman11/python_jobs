@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import requests
+import subprocess
 from natsort import natsorted
 from notifications import send_notification
 from retry_session import RetrySession
@@ -124,12 +125,52 @@ def fetch_quay_tags(image_name: str):
         return None
 
 PRE_RELEASE_KEYWORDS = ("rc", "alpha", "beta")
+ARCHITECTURE_SUFFIXES = {
+    "amd64": ("-amd64", "-x86_64", "-x86-64"),
+    "arm64": ("-arm64", "-aarch64"),
+    "armv7": ("-armv7", "-armhf", "-arm32v7"),
+    "ppc64le": ("-ppc64le",),
+    "s390x": ("-s390x",),
+}
+
+
+def get_cluster_architectures():
+    """Get architectures of all nodes in the cluster"""
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "nodes", "-o", "jsonpath={.items[*].status.nodeInfo.architecture}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logging.warning("Failed to get cluster architectures: %s", result.stderr)
+            return None
+        archs = result.stdout.strip().split()
+        return set(archs) if archs else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        logging.warning("Could not detect cluster architectures: %s", e)
+        return None
+
+
+def is_architecture_compatible(tag, cluster_archs):
+    """Check if tag's architecture (if specified) matches cluster architectures"""
+    if not cluster_archs:
+        return True
+
+    tag_lower = tag.lower()
+    for arch, suffixes in ARCHITECTURE_SUFFIXES.items():
+        for suffix in suffixes:
+            if tag_lower.endswith(suffix):
+                return arch in cluster_archs
+    return True
 
 
 def filter_and_sort_tags(tags):
     # Match semantic version anywhere in tag (e.g., v1.2.3, release-v1.2.3, 1.2.3-build)
     # Also allow optional build metadata with + or -
     regex = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
+    cluster_archs = get_cluster_architectures()
     filtered_tags = []
     for tag in tags:
         # Check if tag contains a semver pattern
@@ -143,6 +184,10 @@ def filter_and_sort_tags(tags):
         # Also exclude "latest", "main", "develop" and other unstable tags
         if any(unstable in tag.lower() for unstable in ("latest", "main", "develop", "master", "nightly", "snapshot", "dev")):
             logging.debug(f"Tag {tag} rejected: unstable keyword")
+            continue
+        # Check if tag architecture is compatible with cluster
+        if not is_architecture_compatible(tag, cluster_archs):
+            logging.debug(f"Tag {tag} rejected: incompatible architecture for cluster")
             continue
         logging.debug(f"Tag {tag} accepted")
         filtered_tags.append(tag)
