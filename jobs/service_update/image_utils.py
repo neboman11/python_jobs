@@ -2,7 +2,6 @@ import os
 import re
 import logging
 import requests
-import subprocess
 from natsort import natsorted
 from notifications import send_notification
 from retry_session import RetrySession
@@ -16,7 +15,7 @@ def check_for_image_update(deployment_file: dict, ignored_images: set[str]):
         if is_ignored_image(image_name, ignored_images):
             logging.info("Skipping ignored image %s", image_name)
             continue
-        new_tag = get_latest_image_tag(image_name)
+        new_tag = get_latest_image_tag(image_name, current_tag)
         if new_tag is None:
             return None
         if new_tag != current_tag:
@@ -127,50 +126,29 @@ def fetch_quay_tags(image_name: str):
 PRE_RELEASE_KEYWORDS = ("rc", "alpha", "beta")
 ARCHITECTURE_SUFFIXES = {
     "amd64": ("-amd64", "-x86_64", "-x86-64"),
-    "arm64": ("-arm64", "-aarch64"),
+    "386": ("-386", "-i386", "-i686"),
+    "arm64": ("-arm64", "-arm64v8", "-aarch64"),
     "armv7": ("-armv7", "-armhf", "-arm32v7"),
+    "armv6": ("-armv6", "-armel", "-arm32v6"),
     "ppc64le": ("-ppc64le",),
+    "riscv64": ("-riscv64",),
     "s390x": ("-s390x",),
 }
 
 
-def get_cluster_architectures():
-    """Get architectures of all nodes in the cluster"""
-    try:
-        result = subprocess.run(
-            ["kubectl", "get", "nodes", "-o", "jsonpath={.items[*].status.nodeInfo.architecture}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            logging.warning("Failed to get cluster architectures: %s", result.stderr)
-            return None
-        archs = result.stdout.strip().split()
-        return set(archs) if archs else None
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
-        logging.warning("Could not detect cluster architectures: %s", e)
-        return None
-
-
-def is_architecture_compatible(tag, cluster_archs):
-    """Check if tag's architecture (if specified) matches cluster architectures"""
-    if not cluster_archs:
-        return True
-
+def tag_architecture(tag: str):
+    """Return the architecture named by a tag's suffix, or None for multi-arch tags."""
     tag_lower = tag.lower()
     for arch, suffixes in ARCHITECTURE_SUFFIXES.items():
-        for suffix in suffixes:
-            if tag_lower.endswith(suffix):
-                return arch in cluster_archs
-    return True
+        if tag_lower.endswith(suffixes):
+            return arch
+    return None
 
 
-def filter_and_sort_tags(tags):
+def filter_and_sort_tags(tags, architecture=None):
     # Match semantic version anywhere in tag (e.g., v1.2.3, release-v1.2.3, 1.2.3-build)
     # Also allow optional build metadata with + or -
     regex = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
-    cluster_archs = get_cluster_architectures()
     filtered_tags = []
     for tag in tags:
         # Check if tag contains a semver pattern
@@ -185,9 +163,9 @@ def filter_and_sort_tags(tags):
         if any(unstable in tag.lower() for unstable in ("latest", "main", "develop", "master", "nightly", "snapshot", "dev")):
             logging.debug(f"Tag {tag} rejected: unstable keyword")
             continue
-        # Check if tag architecture is compatible with cluster
-        if not is_architecture_compatible(tag, cluster_archs):
-            logging.debug(f"Tag {tag} rejected: incompatible architecture for cluster")
+        # Keep the architecture variant of the current tag; untagged means multi-arch only
+        if tag_architecture(tag) != architecture:
+            logging.debug(f"Tag {tag} rejected: architecture differs from {architecture}")
             continue
         logging.debug(f"Tag {tag} accepted")
         filtered_tags.append(tag)
@@ -218,7 +196,7 @@ def fetch_immich_tags_from_github():
         return None
 
 
-def get_latest_image_tag(image_name: str):
+def get_latest_image_tag(image_name: str, current_tag: str | None = None):
     # Special case: immich uses GitHub releases, not ghcr.io tags
     if "immich-app/immich-server" in image_name:
         tags = fetch_immich_tags_from_github()
@@ -235,7 +213,9 @@ def get_latest_image_tag(image_name: str):
     if not tags:
         logging.warning(f"No tags found for {image_name}")
         return None
-    sorted_tags = filter_and_sort_tags(tags)
+    sorted_tags = filter_and_sort_tags(
+        tags, tag_architecture(current_tag) if current_tag else None
+    )
     if not sorted_tags:
         logging.warning("No tags matching pattern found for %s", image_name)
         return None

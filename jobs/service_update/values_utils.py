@@ -8,7 +8,7 @@ import yaml
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 from filters import is_ignored_image
-from image_utils import get_latest_image_tag, parse_image
+from image_utils import get_latest_image_tag, parse_image, tag_architecture
 
 IMMICH_SERVER_IMAGE = "ghcr.io/immich-app/immich-server"
 
@@ -155,14 +155,15 @@ def find_image_updates(values_files, ignored_images: set[str]):
                 logging.info("Skipping ignored image %s", image_name)
                 continue
 
-            if image_name not in latest_tags:
+            tag_key = (image_name, tag_architecture(current_tag))
+            if tag_key not in latest_tags:
                 try:
-                    latest_tags[image_name] = get_latest_image_tag(image_name)
+                    latest_tags[tag_key] = get_latest_image_tag(image_name, current_tag)
                 except ValueError as error:
                     logging.warning("Skipping image %s: %s", image_name, error)
-                    latest_tags[image_name] = None
+                    latest_tags[tag_key] = None
 
-            new_tag = latest_tags[image_name]
+            new_tag = latest_tags[tag_key]
             if not new_tag or new_tag == current_tag:
                 continue
 
