@@ -47,3 +47,24 @@ class FindImageUpdatesTests(unittest.TestCase):
             updates = find_image_updates([values_file], set())
 
         self.assertEqual(len(updates), 1)
+
+    def test_same_image_flavours_do_not_share_cached_update(self):
+        values_file = SimpleNamespace(
+            path="values.yaml",
+            sha="abc123",
+            decoded_content=(
+                b"images:\n"
+                b"  stable:\n"
+                b"    repository: lscr.io/linuxserver/qbittorrent\n"
+                b"    tag: version-5.2.1_v2.1.2\n"
+                b"  alternate:\n"
+                b"    repository: lscr.io/linuxserver/qbittorrent\n"
+                b"    tag: libtorrentv1-version-5.2.1_v2.0.14\n"
+            ),
+        )
+        tags = ["version-5.3.0_v2.1.2", "libtorrentv1-version-5.3.0_v2.0.15"]
+        with patch("image_utils.fetch_docker_tags", return_value=tags):
+            updates = find_image_updates([values_file], set())
+        rendered = group_image_updates(updates)[0]["content"]
+        self.assertIn("tag: version-5.3.0_v2.1.2", rendered)
+        self.assertIn("tag: libtorrentv1-version-5.3.0_v2.0.15", rendered)

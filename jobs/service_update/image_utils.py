@@ -58,13 +58,28 @@ def detect_registry_and_normalize(image_name: str):
     return registry, image_name
 
 
+DOCKER_TAGS_PAGE_SIZE = 100
+DOCKER_TAGS_MAX_PAGES = 10
+
+
 def fetch_docker_tags(image_name: str):
-    url = f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
+    url = (
+        f"https://hub.docker.com/v2/repositories/{image_name}/tags/"
+        f"?page_size={DOCKER_TAGS_PAGE_SIZE}"
+    )
     try:
         session = RetrySession()
-        response = session.get(url)
-        response.raise_for_status()
-        tags = [tag["name"] for tag in response.json().get("results", [])]
+        tags = []
+        # Docker Hub returns the most recently pushed tags first; a single page
+        # can hold only one variant family (e.g. linuxserver libtorrentv1 builds).
+        for _ in range(DOCKER_TAGS_MAX_PAGES):
+            response = session.get(url)
+            response.raise_for_status()
+            payload = response.json()
+            tags.extend(tag["name"] for tag in payload.get("results", []))
+            url = payload.get("next")
+            if not url:
+                break
         return tags
     except requests.RequestException as e:
         error_message = (
@@ -145,10 +160,38 @@ def tag_architecture(tag: str):
     return None
 
 
-def filter_and_sort_tags(tags, architecture=None):
+SEMVER_REGEX = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
+
+
+def tag_variant(tag: str):
+    """Return the non-version shape of a tag: text before the first version
+    plus the text after it with versions, numeric build fields and LS builds normalised.
+
+    `version-5.3.0_v2.1.2` becomes ("version-", "_#"); numeric flavour
+    identifiers such as `-libtorrentv1` remain distinct from `-libtorrentv2`,
+    so different build flavours of one image never replace each other.
+    """
+    match = SEMVER_REGEX.search(tag)
+    if not match:
+        return None
+    suffix = tag[match.end():]
+    arch = tag_architecture(tag)
+    if arch:
+        for arch_suffix in ARCHITECTURE_SUFFIXES[arch]:
+            if suffix.lower().endswith(arch_suffix):
+                suffix = suffix[: -len(arch_suffix)]
+                break
+    suffix = SEMVER_REGEX.sub("#", suffix)
+    suffix = re.sub(r"(?<=-ls)\d+", "#", suffix)
+    suffix = re.sub(r"(?<![A-Za-z0-9])\d+(?![A-Za-z0-9])", "#", suffix)
+    return tag[: match.start()], suffix
+
+
+def filter_and_sort_tags(tags, architecture=None, current_tag=None):
     # Match semantic version anywhere in tag (e.g., v1.2.3, release-v1.2.3, 1.2.3-build)
     # Also allow optional build metadata with + or -
-    regex = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
+    regex = SEMVER_REGEX
+    current_variant = tag_variant(current_tag) if current_tag else None
     filtered_tags = []
     for tag in tags:
         # Check if tag contains a semver pattern
@@ -166,6 +209,10 @@ def filter_and_sort_tags(tags, architecture=None):
         # Keep the architecture variant of the current tag; untagged means multi-arch only
         if tag_architecture(tag) != architecture:
             logging.debug(f"Tag {tag} rejected: architecture differs from {architecture}")
+            continue
+        # Keep the build flavour of the current tag (prefix/suffix around the version)
+        if current_variant is not None and tag_variant(tag) != current_variant:
+            logging.debug(f"Tag {tag} rejected: variant differs from {current_tag}")
             continue
         logging.debug(f"Tag {tag} accepted")
         filtered_tags.append(tag)
@@ -214,9 +261,14 @@ def get_latest_image_tag(image_name: str, current_tag: str | None = None):
         logging.warning(f"No tags found for {image_name}")
         return None
     sorted_tags = filter_and_sort_tags(
-        tags, tag_architecture(current_tag) if current_tag else None
+        tags,
+        tag_architecture(current_tag) if current_tag else None,
+        current_tag,
     )
     if not sorted_tags:
         logging.warning("No tags matching pattern found for %s", image_name)
         return None
-    return sorted_tags[0]
+    newest = sorted_tags[0]
+    if current_tag and natsorted([current_tag, newest], reverse=True)[0] == current_tag:
+        return current_tag
+    return newest
