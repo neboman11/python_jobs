@@ -2,7 +2,6 @@ import os
 import re
 import logging
 import requests
-from natsort import natsorted
 from notifications import send_notification
 from retry_session import RetrySession
 from filters import is_ignored_image
@@ -163,6 +162,19 @@ def tag_architecture(tag: str):
 SEMVER_REGEX = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?")
 
 
+def tag_version_key(tag: str):
+    """Compare numeric release/build fields, never a lexical 'v' prefix."""
+    match = SEMVER_REGEX.search(tag)
+    return tuple(int(part) for part in re.findall(r"\d+", tag[match.start():])) if match else ()
+
+
+# v2.33.0's amd64 binary crashes with SIGILL on older CPUs.
+# Upstream fix: https://github.com/binwiederhier/ntfy/releases/tag/v2.33.1
+REJECTED_IMAGE_TAGS = {
+    ("docker.io", "binwiederhier/ntfy"): {"v2.33.0", "v2.33.0-amd64"},
+}
+
+
 def tag_variant(tag: str):
     """Return the non-version shape of a tag: text before the first version
     plus the text after it with versions, numeric build fields and LS builds normalised.
@@ -219,7 +231,7 @@ def filter_and_sort_tags(tags, architecture=None, current_tag=None):
 
     if not filtered_tags:
         return None
-    return natsorted(filtered_tags, key=lambda x: x, reverse=True)
+    return sorted(filtered_tags, key=tag_version_key, reverse=True)
 
 
 def fetch_immich_tags_from_github():
@@ -260,6 +272,9 @@ def get_latest_image_tag(image_name: str, current_tag: str | None = None):
     if not tags:
         logging.warning(f"No tags found for {image_name}")
         return None
+    registry, normalized_name = detect_registry_and_normalize(image_name)
+    rejected = REJECTED_IMAGE_TAGS.get((registry, normalized_name), set())
+    tags = [tag for tag in tags if tag not in rejected]
     sorted_tags = filter_and_sort_tags(
         tags,
         tag_architecture(current_tag) if current_tag else None,
@@ -269,6 +284,6 @@ def get_latest_image_tag(image_name: str, current_tag: str | None = None):
         logging.warning("No tags matching pattern found for %s", image_name)
         return None
     newest = sorted_tags[0]
-    if current_tag and natsorted([current_tag, newest], reverse=True)[0] == current_tag:
+    if current_tag and tag_version_key(current_tag) >= tag_version_key(newest):
         return current_tag
     return newest

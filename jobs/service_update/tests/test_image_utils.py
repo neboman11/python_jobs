@@ -93,6 +93,40 @@ class GetLatestImageTagTests(unittest.TestCase):
             )
         self.assertEqual(latest, "12.2.20261006-010203")
 
+    def test_calendar_version_is_not_replaced_by_legacy_v_prefixed_tag(self):
+        self.assertEqual(
+            self._docker_tags("docker.io/pihole/pihole", "2026.10.0",
+                              ["v5.8.1", "2026.10.0", "2026.09.0"]),
+            "2026.10.0",
+        )
+
+    def test_partial_legacy_results_cannot_downgrade_calendar_version(self):
+        self.assertEqual(
+            self._docker_tags("pihole/pihole", "2026.10.0", ["v5.8.1"]),
+            "2026.10.0",
+        )
+
+    def test_calendar_release_updates_remain_enabled(self):
+        self.assertEqual(
+            self._docker_tags("pihole/pihole", "2026.10.0",
+                              ["v5.8.1", "2026.11.0"]),
+            "2026.11.0",
+        )
+
+    def test_ntfy_rejects_known_sigill_release_on_amd64(self):
+        self.assertEqual(
+            self._docker_tags("docker.io/binwiederhier/ntfy", "v2.32.0-amd64",
+                              ["v2.33.0-amd64", "v2.32.0-amd64"]),
+            "v2.32.0-amd64",
+        )
+
+    def test_ntfy_accepts_cpu_compatibility_fix(self):
+        self.assertEqual(
+            self._docker_tags("docker.io/binwiederhier/ntfy", "v2.33.0-amd64",
+                              ["v2.33.0-amd64", "v2.33.1-amd64"]),
+            "v2.33.1-amd64",
+        )
+
     def test_docker_tags_follow_pagination(self):
         pages = [
             {"results": [{"name": "libtorrentv1-version-5.3.0_v2.0.15"}], "next": "https://hub/p2"},
