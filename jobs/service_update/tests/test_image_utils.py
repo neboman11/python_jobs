@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from image_utils import fetch_docker_tags, get_latest_image_tag
+from image_utils import fetch_docker_tags, fetch_ghcr_tags, get_latest_image_tag
 
 
 class GetLatestImageTagTests(unittest.TestCase):
@@ -143,6 +143,28 @@ class GetLatestImageTagTests(unittest.TestCase):
         self.assertEqual(
             tags, ["libtorrentv1-version-5.3.0_v2.0.15", "version-5.3.0_v2.1.2"]
         )
+
+    def test_ghcr_tags_follow_link_pagination(self):
+        token = MagicMock()
+        token.json.return_value = {"token": "t"}
+        page1 = MagicMock()
+        page1.json.return_value = {"tags": ["pr-2460", "master", "2024.06.26"]}
+        page1.links = {"next": {"url": "/v2/mailu/admin/tags/list?last=2024.06.26&n=1000"}}
+        page2 = MagicMock()
+        page2.json.return_value = {"tags": ["2024.06.67"]}
+        page2.links = {}
+        with patch("image_utils.RetrySession") as session:
+            session.return_value.get.side_effect = [token, page1, page2]
+            tags = fetch_ghcr_tags("ghcr.io/mailu/admin")
+        self.assertEqual(tags, ["pr-2460", "master", "2024.06.26", "2024.06.67"])
+        next_call = session.return_value.get.call_args_list[2]
+        self.assertEqual(next_call.args[0], "https://ghcr.io/v2/mailu/admin/tags/list?last=2024.06.26&n=1000")
+
+    def test_mailu_calendar_release_ignores_branch_pr_and_legacy_tags(self):
+        tags = ["latest", "master", "staging", "pr-2524", "1.9", "1.9.50", "2024.06", "2024.06.26", "2024.06.9",
+                "2024.06.67", "buildcache-arm"]
+        with patch("image_utils.fetch_ghcr_tags", return_value=tags):
+            self.assertEqual(get_latest_image_tag("ghcr.io/mailu/admin", "2024.06.26"), "2024.06.67")
 
 
 if __name__ == "__main__":

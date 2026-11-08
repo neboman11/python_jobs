@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import requests
+from urllib.parse import urljoin
 from notifications import send_notification
 from retry_session import RetrySession
 from filters import is_ignored_image
@@ -59,6 +60,8 @@ def detect_registry_and_normalize(image_name: str):
 
 DOCKER_TAGS_PAGE_SIZE = 100
 DOCKER_TAGS_MAX_PAGES = 10
+GHCR_TAGS_PAGE_SIZE = 1000
+GHCR_TAGS_MAX_PAGES = 20
 
 
 def fetch_docker_tags(image_name: str):
@@ -90,31 +93,43 @@ def fetch_docker_tags(image_name: str):
 
 
 def fetch_ghcr_tags(image_name: str):
+    """All tags from the GHCR registry API (OCI tags/list), following Link pagination.
+
+    The GitHub Packages API returns package *versions* newest-first; busy repos (Mailu, Jellyfin) fill its first
+    page with untagged build caches and PR builds, hiding release tags.
+    """
     if image_name.startswith("ghcr.io/"):
         image_name = image_name[len("ghcr.io/") :]
 
     token = os.getenv("GHCR_TOKEN")
-    image_user = image_name.split("/")[0]
-    image_repo = image_name[len(image_user) + 1 :].replace("/", "%2F")
-    url = (
-        f"https://api.github.com/users/{image_user}/packages/container/"
-        f"{image_repo}/versions?per_page=100"
-    )
-
     try:
         session = RetrySession()
-        response = session.get(url, headers={"Authorization": f"Bearer {token}"})
-        response.raise_for_status()
+        # Anonymous pull tokens cover public images; GHCR_TOKEN (any username) adds private ones.
+        auth_response = session.get(
+            "https://ghcr.io/token",
+            params={"scope": f"repository:{image_name}:pull"},
+            auth=("service-update", token) if token else None,
+        )
+        auth_response.raise_for_status()
+        headers = {"Authorization": f"Bearer {auth_response.json()['token']}"}
 
         tags = []
-        for package in response.json():
-            tags.extend(package["metadata"]["container"]["tags"])
+        url = f"https://ghcr.io/v2/{image_name}/tags/list?n={GHCR_TAGS_PAGE_SIZE}"
+        for _ in range(GHCR_TAGS_MAX_PAGES):
+            response = session.get(url, headers=headers)
+            response.raise_for_status()
+            tags.extend(response.json().get("tags") or [])
+            next_url = response.links.get("next", {}).get("url")
+            if not next_url:
+                break
+            url = urljoin("https://ghcr.io", next_url)
         return tags
-    except requests.RequestException as error:
+    except (requests.RequestException, KeyError, ValueError) as error:
         error_message = f"Error pulling latest image tag GHCR {image_name}: {error}"
         logging.error(error_message)
         send_notification(error_message)
         return None
+
 
 def fetch_quay_tags(image_name: str):
     if image_name.startswith("quay.io/"):

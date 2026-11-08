@@ -6,6 +6,23 @@ from values_utils import find_image_updates, group_image_updates
 
 
 class FindImageUpdatesTests(unittest.TestCase):
+    def test_updates_mailu_version_in_place(self):
+        values_file = SimpleNamespace(
+            path="mailu/mailu/values.yaml",
+            sha="abc123",
+            decoded_content=b"mailu:\n  logLevel: INFO\n  mailuVersion: 2024.06.26\n  subnet: 10.32.0.0/12\n",
+        )
+
+        with patch("values_utils.get_latest_image_tag", return_value="2024.06.67") as latest:
+            updates = find_image_updates([values_file], set())
+
+        latest.assert_called_once_with("ghcr.io/mailu/admin", "2024.06.26")
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(
+            group_image_updates(updates)[0]["content"],
+            "mailu:\n  logLevel: INFO\n  mailuVersion: 2024.06.67\n  subnet: 10.32.0.0/12\n",
+        )
+
     def test_updates_immich_tag_without_an_explicit_repository(self):
         values_file = SimpleNamespace(
             path="immich/immich/values.yaml",

@@ -11,6 +11,8 @@ from filters import is_ignored_image
 from image_utils import get_latest_image_tag, parse_image
 
 IMMICH_SERVER_IMAGE = "ghcr.io/immich-app/immich-server"
+# Mailu's chart takes one version for all its images (admin, dovecot, postfix, ...); admin stands in for the set.
+MAILU_VERSION_IMAGE = "ghcr.io/mailu/admin"
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,9 @@ def _image_nodes(node):
             for key, value in node.value
             if isinstance(key, ScalarNode)
         }
+        mailu_version = values.get("mailuVersion")
+        if isinstance(mailu_version, ScalarNode) and mailu_version.value:
+            yield MAILU_VERSION_IMAGE, mailu_version.value, mailu_version, _render_scalar
         immich = values.get("immich")
         if isinstance(immich, MappingNode):
             immich_values = {
