@@ -43,6 +43,16 @@ def _image_nodes(node):
             for key, value in node.value
             if isinstance(key, ScalarNode)
         }
+        # Non-image pins: {githubRelease: owner/name, version: <release tag>} tracks GitHub releases.
+        github_release = values.get("githubRelease")
+        release_version = values.get("version")
+        if (
+            isinstance(github_release, ScalarNode)
+            and isinstance(release_version, ScalarNode)
+            and github_release.value
+            and release_version.value
+        ):
+            yield f"github.com/{github_release.value}", release_version.value, release_version, _render_scalar
         mailu_version = values.get("mailuVersion")
         if isinstance(mailu_version, ScalarNode) and mailu_version.value:
             yield MAILU_VERSION_IMAGE, mailu_version.value, mailu_version, _render_scalar

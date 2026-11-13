@@ -23,6 +23,26 @@ class FindImageUpdatesTests(unittest.TestCase):
             "mailu:\n  logLevel: INFO\n  mailuVersion: 2024.06.67\n  subnet: 10.32.0.0/12\n",
         )
 
+    def test_updates_github_release_pinned_version(self):
+        values_file = SimpleNamespace(
+            path="dcs/dcs-server/values.yaml",
+            sha="abc123",
+            decoded_content=b"tools:\n  dcsserverbot:\n    githubRelease: Owner/Bot\n    version: v3.0.5.2\n    enabled: false\n",
+        )
+
+        with patch(
+            "image_utils.fetch_github_release_tags",
+            return_value=["v3.0.5.10", "v3.0.5.3", "v3.0.5.2"],
+        ) as releases:
+            updates = find_image_updates([values_file], set())
+
+        releases.assert_called_once_with("Owner/Bot")
+        self.assertEqual(updates[0].image_name, "github.com/Owner/Bot")
+        self.assertEqual(
+            group_image_updates(updates)[0]["content"],
+            "tools:\n  dcsserverbot:\n    githubRelease: Owner/Bot\n    version: v3.0.5.10\n    enabled: false\n",
+        )
+
     def test_updates_immich_tag_without_an_explicit_repository(self):
         values_file = SimpleNamespace(
             path="immich/immich/values.yaml",

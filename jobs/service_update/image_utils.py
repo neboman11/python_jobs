@@ -249,22 +249,20 @@ def filter_and_sort_tags(tags, architecture=None, current_tag=None):
     return sorted(filtered_tags, key=tag_version_key, reverse=True)
 
 
-def fetch_immich_tags_from_github():
-    """Fetch immich tags from GitHub releases API instead of ghcr.io"""
+def fetch_github_release_tags(repository: str):
+    """Non-prerelease release tag names of a GitHub repository ("owner/name")."""
     token = os.getenv("GITHUB_PAT")
-    url = "https://api.github.com/repos/immich-app/immich/releases"
+    url = f"https://api.github.com/repos/{repository}/releases?per_page=100"
     try:
         session = RetrySession()
         headers = {"Authorization": f"token {token}"} if token else {}
         response = session.get(url, headers=headers)
         response.raise_for_status()
         releases = response.json()
-        logging.debug(f"GitHub API returned {len(releases)} releases")
-        tags = [r["tag_name"] for r in releases if not r.get("prerelease", False)]
-        logging.debug(f"After prerelease filter: {tags}")
-        return tags
+        logging.debug(f"GitHub API returned {len(releases)} releases for {repository}")
+        return [r["tag_name"] for r in releases if not r.get("prerelease", False)]
     except requests.RequestException as e:
-        error_message = f"Error fetching immich tags from GitHub: {e}"
+        error_message = f"Error fetching {repository} releases from GitHub: {e}"
         logging.error(error_message)
         send_notification(error_message)
         return None
@@ -273,10 +271,12 @@ def fetch_immich_tags_from_github():
 def get_latest_image_tag(image_name: str, current_tag: str | None = None):
     # Special case: immich uses GitHub releases, not ghcr.io tags
     if "immich-app/immich-server" in image_name:
-        tags = fetch_immich_tags_from_github()
+        tags = fetch_github_release_tags("immich-app/immich")
     else:
         registry, normalized_name = detect_registry_and_normalize(image_name)
-        if registry == "docker.io":
+        if registry == "github.com":
+            tags = fetch_github_release_tags(normalized_name)
+        elif registry == "docker.io":
             tags = fetch_docker_tags(normalized_name)
         elif registry == "ghcr.io":
             tags = fetch_ghcr_tags(normalized_name)
